@@ -1,4 +1,14 @@
-# Validation — 12 October 2026
+# Validation — Xervexl 0.2, 12 October 2026
+
+- **32 regression and integration tests passed**. Added coverage for rank-based rewards/penalties, zero-stamina perfect parry, disarms and recovery, temporary borrowed weapons, impact regions/helmets, ranged swept collision, reflected-arrow kill ownership, expensive permanent health, spell costs/cooldowns, frost slowing, fire damage/credit and lightning effects.
+- Old-account migration was tested with a real legacy JSON fixture. It backed up the original and preserved the existing password hash, crowns, kills and owned/equipped sword. Local account files were also backed up before activation. No Active-Connection data was edited.
+- A deterministic 30-second simulation produced **187 attacks and 22 eliminations**, with ranked bots using melee and ranged weapons. This is a combat activity check, not proof of optimal AI or balanced human difficulty.
+- **One installed executable, one window, one session** switched **Vulkan → OpenGL → Vulkan → OpenGL** during an actual arena connection. It retained its player and connection, loaded the 39-item server catalog and reported no error. The switch smoke rendered 152 frames over 4.03 seconds; this includes pipeline/context recreation pauses.
+- Two simultaneous installed clients, selecting different APIs in that same executable, each reported **2 humans + 8 bots = 10 fighters**. The last short run rendered 203 OpenGL frames in 4.01 seconds and 235 Vulkan frames in 4.01 seconds. These approximate 51/59 fps measurements are not load or performance guarantees.
+- Native ranged-store, leaderboard and health-store GPU frames were visually checked. The health card correctly showed 100 → 120 max health at 12,000 crowns. Account data, runtime logs, backups and credentials are excluded from Git and from the fresh packaging directory.
+- Public internet hosting, email delivery, long-duration operation, large population capacity and human balancing/playtesting remain untested. Graphics and collision still have the prototype limitations documented in README.md.
+
+## Historical 0.1 checks
 
 - Native C++20 executable built successfully using the installed portable WinLibs GCC 16.2.0 toolchain. Windows system APIs and the installed Vulkan loader are the runtime dependencies; no MinGW runtime DLL needs to be installed.
 - **13 regression/integration tests passed**, including real HTTP requests from two independent sessions, shared movement, bot replacement, hashed/persistent accounts, equipment economics, authority, timed parry, damage, respawn, stale input and one-use password reset.

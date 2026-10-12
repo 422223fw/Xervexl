@@ -89,7 +89,7 @@ class ArenaTests(unittest.TestCase):
         self.assertEqual(self.arena.events[-1]["kind"],"parry")
 
     def test_client_cannot_teleport_or_forge_rewards(self):
-        token,f=self.guest();old_x=f["x"]
+        token,f=self.guest();f.update(x=0,z=30);old_x=f["x"]
         self.arena.request("/arena/state",dict(move=[9999,9999],yaw=0,x=999,hp=999,coins=99999),token)
         self.arena.tick(.03)
         self.assertLess(abs(f["x"]-old_x),.2)
@@ -99,6 +99,7 @@ class ArenaTests(unittest.TestCase):
 
     def test_stale_input_stops_movement(self):
         token,f=self.guest()
+        f.update(x=0,z=30)
         self.arena.request("/arena/state",dict(move=[1,0]),token)
         self.arena.clock+=1
         before=f["x"]

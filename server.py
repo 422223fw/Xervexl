@@ -13,29 +13,17 @@ import random
 import re
 import secrets
 import smtplib
+import shutil
 import threading
 import time
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from rules import (VERSION,WEAPONS,GEAR,CATALOG,ITEMS,RANGED,PERSISTENT,
+                   complete_account,level_for_xp,xp_for_level,health_price)
+from combat import Combat
 
 ROOT = Path(__file__).resolve().parent
-WEAPONS = [
-    dict(id="knife", name="Worn knife", price=0, damage=16, reach=1.65, cooldown=.34),
-    dict(id="arming", name="Arming sword", price=180, damage=23, reach=2.45, cooldown=.52),
-    dict(id="sabre", name="Cavalry sabre", price=420, damage=25, reach=2.65, cooldown=.46),
-    dict(id="longsword", name="Steel longsword", price=720, damage=31, reach=3.05, cooldown=.68),
-    dict(id="greatsword", name="Greatsword", price=1100, damage=39, reach=3.5, cooldown=.88),
-]
-GEAR = [
-    dict(id="buckler", name="Iron buckler", price=260, kind="shield", reduction=.58),
-    dict(id="kite", name="Kite shield", price=580, kind="shield", reduction=.78),
-    dict(id="leather", name="Leather armour", price=320, kind="armour", reduction=.12),
-    dict(id="mail", name="Chainmail", price=680, kind="armour", reduction=.24),
-    dict(id="plate", name="Steel cuirass", price=1200, kind="armour", reduction=.34),
-]
-CATALOG = WEAPONS + GEAR
-ITEMS = {x["id"]: x for x in CATALOG}
 BOT_NAMES = ["Ash", "Bram", "Cinder", "Dusk", "Flint", "Gale", "Hawke", "Ivar", "Juno", "Kestrel", "Lark", "Morrow"]
 
 
@@ -56,18 +44,25 @@ def password_matches(password, stored):
     return hmac.compare_digest(password_hash(password, stored.split(":")[0]), stored)
 
 
-class Arena:
+class Arena(Combat):
     def __init__(self, data_path=None, seed=None):
         self.path = Path(data_path or ROOT / "data" / "accounts.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.rng = random.Random(seed)
         self.lock = threading.RLock()
         self.users = json.loads(self.path.read_text("utf-8")) if self.path.exists() else {}
+        if any("xp" not in u or "health_upgrades" not in u for u in self.users.values()):
+            shutil.copy2(self.path,self.path.with_name(self.path.stem+f".pre-progression-{time.time_ns()}.bak"))
+            for u in self.users.values(): complete_account(u)
+            self.save()
         if not self.path.exists(): self.save()
         self.sessions = {}
         self.resets = {}
         self.fighters = {}
         self.events = []
+        self.event_serial = 0
+        self.drops = []
+        self.projectiles = []
         self.clock = 0.
         self.running = True
         self.bot_serial = 0
@@ -81,16 +76,19 @@ class Arena:
         temporary.replace(self.path)
 
     def profile(self, user):
-        return {k: user[k] for k in ("username", "coins", "inventory", "weapon", "shield", "armour", "kills", "deaths")}
+        level=level_for_xp(user["xp"])
+        return dict({k:user[k] for k in ("username","inventory","weapon","shield","armour","helmet","spell",*PERSISTENT)},
+                    level=level,max_hp=100+20*user["health_upgrades"],next_level_xp=xp_for_level(level+1),
+                    level_start_xp=xp_for_level(level),health_upgrade_price=health_price(user["health_upgrades"]))
 
     def account(self, name, email="", password=""):
-        return dict(username=name, email=email.lower(), password=password_hash(password) if password else "",
-                    coins=100, inventory=["knife"], weapon="knife", shield="", armour="", kills=0, deaths=0)
+        return complete_account(dict(username=name, email=email.lower(), password=password_hash(password) if password else "",
+                    coins=100, inventory=["knife"], weapon="knife", shield="", armour="", kills=0, deaths=0))
 
     def session(self, user, guest=False):
         token = secrets.token_urlsafe(32)
         self.sessions[token] = dict(user=user, guest=guest, touched=time.monotonic(), fighter="")
-        return dict(token=token, profile=self.profile(user))
+        return dict(token=token, profile=self.profile(user),catalog=CATALOG)
 
     def spawn(self, identifier, name, bot=False, depth=0):
         angle = self.rng.random() * math.tau
@@ -99,11 +97,24 @@ class Arena:
                  yaw=angle+math.pi, hp=100., stamina=100., weapon="knife", shield="", armour="", kills=0, deaths=0,
                  cooldown=0., windup=0., attack="", attack_id=0, block=False, block_since=-999., jump=0., dodge=0., dead=0., spawn_safe=1.5,
                  input={}, last_input=0., last_attack=False, last_dodge=False, last_jump=False, plan_at=0., action="advance")
+        f.update(xp=0,level=1,skill=0,coins=100,parries=0,disarms=0,health_upgrades=0,max_hp=100.,helmet="",spell="",
+                 spell_cd=0.,ward=0.,ward_time=0.,slow=0.,disarmed=0.,aim_zone="body",aim_pitch=0.,
+                 burn=0.,burn_tick=0.,burn_source="",
+                 last_drop=False,last_pickup=False,last_cast=False)
         if bot:
             f["weapon"] = self.rng.choice(["knife", "arming", "sabre", "longsword"])
             if depth >= 4:
                 f["armour"] = "leather"
                 f["shield"] = "buckler"
+            starting_level=self.rng.randint(max(1,(depth-2)*3+1),depth*3+2)
+            f["xp"]=xp_for_level(starting_level);f["level"]=starting_level;f["skill"]=starting_level*3
+            f["coins"]=starting_level*70
+            if identifier.endswith("3"):f["weapon"]="bow"
+            if identifier.endswith("6"):f["weapon"]="slingshot"
+            if identifier.endswith("9"):f["weapon"]="crossbow"
+            if depth==5 and self.rng.random()<.35:f["weapon"]="stormblade"
+            if depth==5 and self.rng.random()<.25:f["spell"]="heal"
+        f["loadout_weapon"]=f["weapon"]
         self.fighters[identifier] = f
         return f
 
@@ -137,8 +148,10 @@ class Arena:
                     other["fighter"] = ""
         pid = "p-" + secrets.token_hex(5)
         f = self.spawn(pid, s["user"]["username"])
-        for k in ("weapon", "shield", "armour", "kills", "deaths"):
+        for k in ("weapon","shield","armour","helmet","spell",*PERSISTENT):
             f[k] = s["user"][k]
+        f.update(loadout_weapon=f["weapon"],level=level_for_xp(f["xp"]),max_hp=100+20*f["health_upgrades"])
+        f["hp"]=f["max_hp"]
         s["fighter"] = pid
         self.maintain_bots()
         return pid
@@ -146,7 +159,7 @@ class Arena:
     def request(self, route, body, token=""):
         with self.lock:
             if route == "/health":
-                return dict(ok=True, name="Xervexl", company="motlon", version="0.1.0", mail_ready=bool(os.getenv("SMTP_HOST")))
+                return dict(ok=True,name="Xervexl",company="motlon",version=VERSION,mail_ready=bool(os.getenv("SMTP_HOST")),catalog=CATALOG)
             if route == "/auth/register":
                 name = str(body.get("username", "")).strip()
                 email = str(body.get("email", "")).strip().lower()
@@ -207,11 +220,25 @@ class Arena:
             user = s["user"]
             if route == "/me":
                 return dict(profile=self.profile(user), catalog=CATALOG)
+            if route == "/leaderboards":
+                return dict(leaderboards=self.leaderboards(),profile=self.profile(user))
             if route in ("/shop/buy", "/shop/equip"):
                 item_id = str(body.get("item", ""))
-                if item_id not in ITEMS:
+                if item_id not in ITEMS or ITEMS[item_id].get("hidden"):
                     raise ValueError("Unknown item.")
                 item = ITEMS[item_id]
+                if item_id=="health":
+                    if route!="/shop/buy":raise ValueError("Health upgrades are purchased, not equipped.")
+                    price=health_price(user["health_upgrades"])
+                    if user["coins"]<price:raise ValueError(f"Permanent health costs {price} crowns.")
+                    user["coins"]-=price;user["health_upgrades"]+=1
+                    fighter=self.fighters.get(s["fighter"])
+                    if fighter:
+                        fighter["coins"]=user["coins"];fighter["health_upgrades"]=user["health_upgrades"]
+                        fighter["max_hp"]=100+20*user["health_upgrades"]
+                        if fighter["dead"]<=0:fighter["hp"]=min(fighter["max_hp"],fighter["hp"]+20)
+                    if not s["guest"]:self.save()
+                    return dict(profile=self.profile(user),message="Maximum health increased by 20.")
                 if route == "/shop/buy" and item_id not in user["inventory"]:
                     if user["coins"] < item["price"]:
                         raise ValueError("Not enough crowns. Earn crowns in the arena.")
@@ -222,7 +249,9 @@ class Arena:
                 kind = item.get("kind", "weapon")
                 user[kind] = item_id
                 if s["fighter"] in self.fighters:
-                    self.fighters[s["fighter"]][kind] = item_id
+                    fighter=self.fighters[s["fighter"]]
+                    fighter[kind]=item_id;fighter["coins"]=user["coins"]
+                    if kind=="weapon":fighter["loadout_weapon"]=item_id
                 if not s["guest"]:
                     self.save()
                 return dict(profile=self.profile(user))
@@ -238,6 +267,8 @@ class Arena:
                 if f:
                     # Positions, damage and rewards are NEVER accepted from the client.
                     movement = body.get("move", [0, 0])
+                    if not isinstance(movement,(list,tuple)) or len(movement)!=2:
+                        raise ValueError("Invalid movement.")
                     try:
                         mx, mz = float(movement[0]), float(movement[1])
                         yaw = float(body.get("yaw", f["yaw"]))
@@ -246,14 +277,22 @@ class Arena:
                     except (ValueError, TypeError, IndexError):
                         raise ValueError("Invalid movement.")
                     f["input"] = dict(move=[clamp(mx,-1,1), clamp(mz,-1,1)], yaw=wrap(yaw),
-                                      attack=body.get("attack", "") if body.get("attack", "") in ("left","right","overhead","thrust") else "",
-                                      block=bool(body.get("block")), dodge=bool(body.get("dodge")), jump=bool(body.get("jump")))
+                                      attack=body.get("attack", "") if body.get("attack", "") in ("left","right","overhead","thrust","disarm") else "",
+                                      block=bool(body.get("block")),dodge=bool(body.get("dodge")),jump=bool(body.get("jump")),
+                                      drop=bool(body.get("drop")),pickup=bool(body.get("pickup")),cast=bool(body.get("cast")),
+                                      aim_zone=body.get("aim_zone") if body.get("aim_zone") in ("head","body","legs") else "body")
+                    try:
+                        pitch=float(body.get("aim_pitch",0))
+                        if not math.isfinite(pitch):raise ValueError()
+                    except (TypeError,ValueError):raise ValueError("Invalid aim.")
+                    f["input"]["aim_pitch"]=clamp(pitch,-.8,.8)
                     f["last_input"] = self.clock
                 public = []
                 for a in self.fighters.values():
-                    public.append({k:a[k] for k in ("id","name","bot","depth","x","z","yaw","hp","stamina","weapon","shield","armour","kills","deaths","block","jump","dodge","dead","attack","attack_id","windup","spawn_safe")})
+                    public.append({k:a[k] for k in ("id","name","bot","depth","x","z","yaw","hp","max_hp","stamina","weapon","shield","armour","helmet","spell","kills","deaths","block","jump","dodge","dead","attack","attack_id","windup","spawn_safe","level","xp","skill","coins","disarmed","spell_cd","ward","slow","cooldown")})
                 return dict(player=s["fighter"], time=self.clock, fighters=public, events=self.events[-5:],
-                            profile=self.profile(user), humans=sum(not a["bot"] for a in public), bots=sum(a["bot"] for a in public))
+                            profile=self.profile(user),humans=sum(not a["bot"] for a in public),bots=sum(a["bot"] for a in public),
+                            drops=self.drops,projectiles=self.projectiles)
             raise ValueError("Unknown endpoint.")
 
     def send_reset(self, email, code):
@@ -281,6 +320,8 @@ class Arena:
         own = ITEMS[bot["weapon"]]
         enemy = ITEMS[opponent["weapon"]]
         actions = ("advance", "retreat", "strafe_l", "strafe_r", "block", "left", "overhead", "thrust", "dodge")
+        ranged=own["family"] in RANGED
+        if ranged:actions=("advance","retreat","strafe_l","strafe_r","thrust","dodge")
         beam = [(0., distance, bot["hp"], opponent["hp"], bot["stamina"], "", bot["cooldown"], opponent["cooldown"])]
         threat = opponent["windup"] > 0 or bool(opponent["input"].get("attack"))
         for ply in range(bot["depth"]):
@@ -320,7 +361,8 @@ class Arena:
                     gain = (ehp-e)*1.45 - (hp-h)*1.15 + (dist-d)*1.5
                     if action == "block" and not threat: gain -= 2.
                     if action == "retreat" and bot["hp"]>35: gain -= 1.
-                    score = previous_score + gain*(.76**ply) - abs(d-own["reach"]*.78)*.25
+                    preferred=10. if ranged else own["reach"]*.78
+                    score = previous_score + gain*(.76**ply) - abs(d-preferred)*.25
                     if h <= 0: score -= 180
                     if e <= 0: score += 140
                     # Small stable preference prevents permanent block/retreat equilibria.
@@ -331,6 +373,10 @@ class Arena:
         return beam[0][5] if beam else "advance"
 
     def bot_input(self, f):
+        if f["weapon"]=="fists" and self.drops:
+            drop=min(self.drops,key=lambda d:math.hypot(d["x"]-f["x"],d["z"]-f["z"]))
+            yaw=math.atan2(drop["x"]-f["x"],drop["z"]-f["z"])
+            return dict(move=[math.sin(yaw),math.cos(yaw)],yaw=yaw,pickup=True)
         enemies = [a for a in self.fighters.values() if a["id"] != f["id"] and a["dead"] <= 0]
         if not enemies:
             return {}
@@ -346,9 +392,12 @@ class Arena:
         elif action == "strafe_r": mx,mz = mz,-mx
         elif action not in ("advance", "dodge"): mx,mz = 0,0
         attack = action if action in ("left","overhead","thrust") else ""
+        if f["depth"]>=3 and target["weapon"]!="fists" and target["stamina"]<30 and math.hypot(target["x"]-f["x"],target["z"]-f["z"])<2.3:
+            attack="disarm"
         # Repeated attacks are separated by a released input edge.
         if f["last_attack"]: attack = ""
-        return dict(move=[mx,mz],yaw=yaw,attack=attack,block=action=="block",dodge=action=="dodge" and not f["last_dodge"],jump=False)
+        return dict(move=[mx,mz],yaw=yaw,attack=attack,block=action=="block",dodge=action=="dodge" and not f["last_dodge"],jump=False,
+                    aim_zone="head" if f["depth"]>=4 else "body",cast=bool(f["spell"]) and f["hp"]<50)
 
     def tick(self, dt):
         with self.lock:
@@ -365,17 +414,32 @@ class Arena:
                     if f["dead"] <= 0:
                         f["dead"] = 0
                         angle = self.rng.random()*math.tau
-                        f.update(x=math.sin(angle)*18,z=math.cos(angle)*18,hp=100.,stamina=100.,cooldown=0.,windup=0.,attack="",block=False,spawn_safe=1.5)
+                        f.update(x=math.sin(angle)*18,z=math.cos(angle)*18,hp=f["max_hp"],stamina=100.,cooldown=0.,windup=0.,attack="",block=False,spawn_safe=1.5,
+                                 weapon=f["loadout_weapon"],disarmed=0.,ward=0.,slow=0.,burn=0.,last_attack=False)
                     continue
                 if f["bot"]: inp = self.bot_input(f)
                 else: inp = f["input"] if self.clock-f["last_input"] < .5 else {}
+                if f["burn"]>0:
+                    f["burn"]=max(0.,f["burn"]-dt);f["burn_tick"]+=dt
+                    if f["burn_tick"]>=.5:
+                        f["burn_tick"]-=.5;source=self.fighters.get(f["burn_source"])
+                        if source:self.damage(source,f,1.5,"body",kind="burn")
+                    if f["dead"]>0:continue
                 f["spawn_safe"] = max(0.,f["spawn_safe"]-dt)
                 f["yaw"] = inp.get("yaw",f["yaw"])
+                f["aim_zone"]=inp.get("aim_zone","body");f["aim_pitch"]=inp.get("aim_pitch",0)
+                for timer in ("spell_cd","slow","disarmed","ward_time"):f[timer]=max(0.,f[timer]-dt)
+                if f["ward_time"]<=0:f["ward"]=0.
+                if inp.get("drop") and not f["last_drop"]:self.drop_weapon(f)
+                if inp.get("pickup") and not f["last_pickup"]:self.pickup_weapon(f)
+                if inp.get("cast") and not f["last_cast"]:self.cast_spell(f)
+                for action in ("drop","pickup","cast"):f["last_"+action]=bool(inp.get(action))
+                if f["bot"]:f["last_pickup"]=False
                 f["cooldown"] = max(0.,f["cooldown"]-dt)
                 f["dodge"] = max(0.,f["dodge"]-dt)
                 f["jump"] = max(0.,f["jump"]-dt)
                 was_blocking = f["block"]
-                f["block"] = bool(inp.get("block")) and f["stamina"] > 5 and f["windup"] <= 0
+                f["block"] = bool(inp.get("block")) and f["windup"] <= 0 and f["disarmed"]<=0
                 if f["block"] and not was_blocking: f["block_since"] = self.clock
                 if inp.get("dodge") and not f["last_dodge"] and f["stamina"] >= 24 and f["dodge"]<=0:
                     f["dodge"] = .32
@@ -388,7 +452,8 @@ class Arena:
                 move = inp.get("move",[0,0])
                 length = max(1.,math.hypot(*move))
                 speed = 4.4*(.62 if f["block"] else 1.)*(2.5 if f["dodge"]>0 else 1.)
-                if f["armour"] == "plate": speed *= .88
+                speed*=ITEMS.get(f["armour"],{}).get("slow",1.)*ITEMS.get(f["shield"],{}).get("slow",1.)
+                if f["slow"]>0:speed*=.60
                 f["x"] += move[0]/length*speed*dt
                 f["z"] += move[1]/length*speed*dt
                 radius = math.hypot(f["x"],f["z"])
@@ -397,12 +462,13 @@ class Arena:
                     f["z"] *= 38/radius
                 f["stamina"] = min(100.,f["stamina"]+dt*(8 if f["block"] else 18))
                 attack = inp.get("attack", "")
-                cost = 20 if attack == "overhead" else 12
-                if attack and not f["last_attack"] and f["cooldown"]<=0 and f["stamina"]>=cost and not f["block"]:
+                ranged=ITEMS[f["weapon"]]["family"] in RANGED
+                cost = 22 if attack=="disarm" else 10 if ranged else 20 if attack == "overhead" else 12
+                if attack and not f["last_attack"] and f["cooldown"]<=0 and f["stamina"]>=cost and not f["block"] and f["disarmed"]<=0:
                     f["attack"] = attack
                     f["attack_id"] += 1
-                    f["windup"] = .22 if attack == "overhead" else .16
-                    f["cooldown"] = ITEMS[f["weapon"]]["cooldown"] + (.18 if attack == "overhead" else -.05 if attack == "thrust" else 0)
+                    f["windup"] = .24 if attack=="disarm" else .22 if attack == "overhead" else .16
+                    f["cooldown"] = ITEMS[f["weapon"]]["cooldown"] + (0 if ranged else .18 if attack == "overhead" else -.05 if attack == "thrust" else 0)
                     f["stamina"] -= cost
                 f["last_attack"] = bool(attack)
                 if f["windup"] > 0:
@@ -410,6 +476,7 @@ class Arena:
                     if f["windup"] <= 0: self.strike(f)
                 if f["cooldown"] <= 0: f["attack"] = ""
             alive = [f for f in self.fighters.values() if f["dead"]<=0]
+            self.tick_objects(dt)
             for i,a in enumerate(alive):
                 for b in alive[i+1:]:
                     dx,dz = b["x"]-a["x"],b["z"]-a["z"]
@@ -418,46 +485,6 @@ class Arena:
                         push = (.78-dist)*.5
                         a["x"] -= dx/dist*push; a["z"] -= dz/dist*push
                         b["x"] += dx/dist*push; b["z"] += dz/dist*push
-
-    def strike(self, attacker):
-        if attacker["spawn_safe"]>0: return
-        item = ITEMS[attacker["weapon"]]
-        reach = item["reach"] + (.35 if attacker["attack"] == "thrust" else 0)
-        arc = .30 if attacker["attack"] == "thrust" else (.46 if attacker["attack"]=="overhead" else 1.05)
-        for victim in self.fighters.values():
-            if victim is attacker or victim["dead"]>0 or victim["dodge"]>0 or victim["spawn_safe"]>0: continue
-            dx,dz = victim["x"]-attacker["x"],victim["z"]-attacker["z"]
-            distance = math.hypot(dx,dz)
-            if distance > reach or abs(wrap(math.atan2(dx,dz)-attacker["yaw"]))>arc: continue
-            damage = item["damage"]*(1.2 if attacker["attack"]=="overhead" else .85 if attacker["attack"]=="thrust" else 1.)
-            facing = abs(wrap(math.atan2(-dx,-dz)-victim["yaw"]))<1.15
-            if victim["block"] and facing and victim["stamina"]>=10:
-                if self.clock-victim["block_since"] <= .18:
-                    victim["stamina"] -= 8
-                    attacker["cooldown"] = max(attacker["cooldown"],.85)
-                    self.events.append(dict(kind="parry",source=attacker["id"],target=victim["id"],time=self.clock))
-                    self.events = self.events[-40:]
-                    return
-                reduction = ITEMS.get(victim["shield"],{}).get("reduction",.52)
-                damage *= 1-reduction
-                victim["stamina"] = max(0,victim["stamina"]-18)
-            damage *= 1-ITEMS.get(victim["armour"],{}).get("reduction",0)
-            victim["hp"] = max(0.,victim["hp"]-damage)
-            self.events.append(dict(kind="hit", source=attacker["id"],target=victim["id"],damage=round(damage),time=self.clock))
-            if victim["hp"]<=0:
-                victim["dead"] = 3.5
-                victim["deaths"] += 1
-                attacker["kills"] += 1
-                self.events.append(dict(kind="kill",source=attacker["name"],target=victim["name"],time=self.clock))
-                for s in self.sessions.values():
-                    if s["fighter"] == attacker["id"]:
-                        s["user"]["coins"] += 45
-                        s["user"]["kills"] = attacker["kills"]
-                        if not s["guest"]: self.save()
-                    if s["fighter"] == victim["id"]:
-                        s["user"]["deaths"] = victim["deaths"]
-                        if not s["guest"]: self.save()
-            self.events = self.events[-40:]
 
     def run(self):
         previous = time.monotonic()

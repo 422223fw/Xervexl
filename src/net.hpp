@@ -11,7 +11,7 @@ using json=nlohmann::json;
 struct Network {
     struct Task { std::string route;json body; };
     std::mutex mutex;std::deque<Task> tasks;
-    json world=json::object(),profile=json::object(),input=json::object();
+    json world=json::object(),profile=json::object(),input=json::object(),catalog=json::array(),boards=json::object();
     std::string url="http://127.0.0.1:8765",token,error,message,player;
     std::atomic<bool> running{true};bool connected=false,joined=false,busy=false;
     std::thread worker;
@@ -21,7 +21,7 @@ struct Network {
         std::lock_guard<std::mutex> guard(mutex);tasks.push_back({route,body});busy=true;error.clear();message.clear();
     }
     void server(const std::string& address){
-        std::lock_guard<std::mutex> guard(mutex);url=address;token.clear();player.clear();world=json::object();profile=json::object();joined=false;connected=false;tasks.clear();error.clear();message="Server address updated.";
+        std::lock_guard<std::mutex> guard(mutex);url=address;token.clear();player.clear();world=json::object();profile=json::object();catalog=json::array();boards=json::object();joined=false;connected=false;tasks.clear();error.clear();message="Server address updated.";
     }
     static std::wstring wide(const std::string& value){
         int n=MultiByteToWideChar(CP_UTF8,0,value.c_str(),static_cast<int>(value.size()),nullptr,0);
@@ -71,9 +71,11 @@ struct Network {
                     if(base!=url)continue;
                     if(result.contains("error")){error=result["error"].get<std::string>();busy=!tasks.empty();}
                     else{
-                        connected=true;error.clear();
+                        if(task.route!="/arena/state"||!connected)error.clear();connected=true;
                         if(result.contains("token")){token=result["token"].get<std::string>();joined=false;player.clear();world=json::object();}
                         if(result.contains("profile"))profile=result["profile"];
+                        if(result.contains("catalog"))catalog=result["catalog"];
+                        if(result.contains("leaderboards"))boards=result["leaderboards"];
                         if(result.contains("player"))player=result["player"].get<std::string>();
                         if(result.contains("fighters"))world=result;
                         if(result.contains("message"))message=result["message"].get<std::string>();

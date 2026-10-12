@@ -1,14 +1,14 @@
 # Xervexl — motlon
 
-A playable Windows sword arena prototype with native C++ rendering in **OpenGL or Vulkan**, an authoritative Python server, persistent equipment, and bots that fill empty player slots. Original procedural scenery and characters: daylight, sand, stone walls, banners, trees, steel and shields. No supernatural abilities, match winner or final round.
+A playable Windows arena with **OpenGL and Vulkan in one native C++ executable**, an authoritative Python server, XP/ranks/skill, persistent accounts, a 39-item store and bots that fill empty slots. The same session survives changing graphics API in Settings. Procedural daylight, sand, stone walls, banners, trees, steel, projectiles and rare arcane weapons. There is no match winner or final round.
 
 ## Play
 
 Double-click **Play-Xervexl.cmd**. It starts a hidden local arena server and opens the game. No Windows administrator privileges are needed. Python 3.10+ is required; Python and the portable C++ compiler are already installed on this computer.
 
-The compiled game is `build/Xervexl.exe`. For Vulkan, choose **Settings → Vulkan**, or run `powershell -NoProfile -ExecutionPolicy Bypass -File start.ps1 -Vulkan`. A compatible GPU driver is required; the client reports failure and falls back to OpenGL.
+The compiled game is `build/Xervexl.exe`. Auto mode prefers Vulkan and falls back to OpenGL. **Both APIs are in the same file**, selectable in **Settings → Auto / OpenGL / Vulkan**; they do not render the same frame simultaneously. A compatible GPU driver is required. `powershell -NoProfile -ExecutionPolicy Bypass -File start.ps1 -Vulkan` remains supported.
 
-**Enter the arena** works immediately as a guest. Sign in or create an account to keep equipment and crowns. Guests start with a knife and 100 crowns; registered accounts also start with a knife and 100 crowns. Defeating a fighter earns 45 crowns. New purchases equip automatically. Guest progress is temporary.
+**Enter the arena** works immediately as a guest. Sign in to keep equipment, crowns and progression. Everyone starts with a knife and 100 crowns. Eliminations earn XP, the victim's rank in skill, and rank-dependent crowns. Death removes skill, with a bigger penalty against a lower-rank killer. **SCORING.md** documents all formulas. New purchases equip automatically. Guest progress is temporary.
 
 | Control | Action |
 |---|---|
@@ -17,14 +17,19 @@ The compiled game is `build/Xervexl.exe`. For Vulkan, choose **Settings → Vulk
 | Left mouse button | Attack with selected move |
 | 1 / 2 / 3 / 4 | Left cut / right cut / overhead / thrust |
 | Right mouse button | Block facing an attack |
-| Right mouse just before impact | Timed parry; 180 ms window |
+| Right mouse just before impact | Timed parry; 180 ms window, zero stamina cost, XP + skill |
+| Z / X / C | Aim at legs / body / head |
+| Q | Disarm an exhausted or recovering opponent |
+| G / F | Drop weapon / pick up nearby weapon |
+| B | Cast equipped purchased spell |
+| T | Live skill / rank / XP / crowns / eliminations leaderboards |
 | Shift | Short dodge, costs stamina |
 | Space | Low jump, costs stamina |
 | E | Armoury |
 | Escape | Menu / resume; online combat keeps running |
 | F12 | Save game-frame screenshot in `screenshots/capture.bmp` |
 
-Overhead attacks cost more stamina and recover more slowly. Thrusts have extra reach and a narrow hit cone but lower damage. Shields improve ordinary blocks; armour reduces damage, and plate slows movement. Dodges briefly evade strikes. Death returns you to the arena after 3.5 seconds. New spawns have a 1.5-second entry grace during which they neither deal nor receive damage.
+Overhead attacks cost more stamina and recover more slowly. Thrusts have extra reach and a narrow cone but lower damage. Shields improve blocks; armour/helmets protect different hit regions, and heavy gear slows movement. Timed blade parries and swings can reflect arrows. Borrowed weapons do not add permanent ownership. Dodges briefly evade strikes. Death respawns you after 3.5 seconds. New spawns have 1.5 seconds of entry grace during which they neither deal nor receive damage.
 
 ## Multiplayer
 
@@ -69,13 +74,13 @@ python tests/simulate_bots.py
 
 `build.ps1 -Compiler C:\path\to\g++.exe` supports another MinGW-w64 compiler. The checked-in headers and fixed SPIR-V assembler make the build reproducible without a Vulkan SDK, npm, or administrator installation. `tools/make_shaders.py` assembles only the two fixed shaders represented by `shaders/arena.vert` and `arena.frag`; if their logic changes, update the assembler or use a standard GLSL compiler.
 
-Smoke tests: `build/Xervexl.exe --smoke`, `--smoke --vulkan`, `--smoke --arena`, and `--smoke --arena --vulkan`. They run four seconds, save renderer reports and **GPU-frame** screenshots, then leave the arena. `--shop` opens the armoury for visual checking. Tests cover account hashing/persistence, equipment, authority, timed parry, damage, respawn, bot filling, and a simulation guarding against bots endlessly postponing attacks.
+Smoke tests: `build/Xervexl.exe --smoke --opengl`, `--smoke --vulkan`, `--smoke --arena`, and `--smoke --arena --switch`. The last changes engines during one session. `--server=http://127.0.0.1:18765` allows an isolated preview server. Reports and **GPU-frame** screenshots are saved before exit. `--shop --ranged`, `--shop --arcane`, `--shop --health` and `--leaders` inspect these screens. Tests cover backed-up account migration, scoring, store balances, health upgrades, parry, disarm, projectile ownership, body regions, spells, respawn and multiplayer.
 
 ## Prototype limits
 
 This is the first playable build, not a finished commercial game or a photorealistic production. The arena has a finite physical boundary and continuous play; it does **not** support literally infinite simultaneous people. There is no measured large-scale player capacity. Each server currently has one arena, and collision checks scale quadratically with population. There is no public hosting, matchmaking directory, moderation, account email verification, server deployment automation or production anti-cheat service.
 
-Bot search really runs 2–5 plies with a seven-state beam, but uses a simplified combat forecast and a nearest-opponent target. It is not full chess-style optimal play or a general model of human reasoning. Combat uses distance/angle hit cones and capsule-like player separation, not per-bone weapon collisions. Jumping is small and visual; it is not an extra invulnerability power. The third-person camera can pass through scenery.
+Bot search runs 2–5 plies with a seven-state beam, using a simplified forecast and nearest-opponent target. Bots use ranged weapons, disarm vulnerable opponents and recover dropped weapons. Rank and AI depth are distinct. This is not optimal play or general human reasoning. Melee uses distance/angle/height hit regions; projectiles use swept segments against upright capsules. These approximate collisions rather than per-bone meshes. Jumping changes impact height and is not an invulnerability power. The camera can pass through scenery. Economy and difficulty have not undergone a human playtest; rankings are per server.
 
 3D geometry is projected on the CPU and triangles are sorted before drawing. OpenGL uses a fixed-function triangle stream; Vulkan uses a real instance/device, swapchain, command buffers, vertex buffer, SPIR-V graphics pipeline and GPU presentation. There is no GPU depth buffer, advanced lighting, textures, animation skeleton, positional audio or modern postprocessing yet. The initial graphics are procedural and stylized.
 
