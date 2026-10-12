@@ -1,0 +1,10 @@
+import sys
+import time
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from server import Arena
+a=Arena(Path(__file__).resolve().parents[1]/"data"/"simulation"/"accounts.json",seed=4)
+start=time.monotonic()
+for _ in range(900): a.tick(1/30)
+print(dict(simulated_seconds=30,wall_seconds=round(time.monotonic()-start,2),kills=sum(f["kills"] for f in a.fighters.values()),attacks=sum(f["attack_id"] for f in a.fighters.values()),health=[round(f["hp"]) for f in a.fighters.values()]))
+print([(f["name"],f["action"],round(f["x"],1),round(f["z"],1)) for f in a.fighters.values()])

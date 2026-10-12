@@ -1,0 +1,539 @@
+"""Xervexl authoritative arena server. Python stdlib only; no administrator rights.
+
+Bind to loopback by default. Put an HTTPS reverse proxy in front of a public server.
+Account JSON is private runtime data, deliberately excluded from Git.
+"""
+import argparse
+import hashlib
+import hmac
+import json
+import math
+import os
+import random
+import re
+import secrets
+import smtplib
+import threading
+import time
+from email.message import EmailMessage
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+WEAPONS = [
+    dict(id="knife", name="Worn knife", price=0, damage=16, reach=1.65, cooldown=.34),
+    dict(id="arming", name="Arming sword", price=180, damage=23, reach=2.45, cooldown=.52),
+    dict(id="sabre", name="Cavalry sabre", price=420, damage=25, reach=2.65, cooldown=.46),
+    dict(id="longsword", name="Steel longsword", price=720, damage=31, reach=3.05, cooldown=.68),
+    dict(id="greatsword", name="Greatsword", price=1100, damage=39, reach=3.5, cooldown=.88),
+]
+GEAR = [
+    dict(id="buckler", name="Iron buckler", price=260, kind="shield", reduction=.58),
+    dict(id="kite", name="Kite shield", price=580, kind="shield", reduction=.78),
+    dict(id="leather", name="Leather armour", price=320, kind="armour", reduction=.12),
+    dict(id="mail", name="Chainmail", price=680, kind="armour", reduction=.24),
+    dict(id="plate", name="Steel cuirass", price=1200, kind="armour", reduction=.34),
+]
+CATALOG = WEAPONS + GEAR
+ITEMS = {x["id"]: x for x in CATALOG}
+BOT_NAMES = ["Ash", "Bram", "Cinder", "Dusk", "Flint", "Gale", "Hawke", "Ivar", "Juno", "Kestrel", "Lark", "Morrow"]
+
+
+def clamp(v, a, b):
+    return max(a, min(b, v))
+
+
+def wrap(a):
+    return (a + math.pi) % (2 * math.pi) - math.pi
+
+
+def password_hash(password, salt=None):
+    salt = salt or secrets.token_hex(16)
+    return salt + ":" + hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 310_000).hex()
+
+
+def password_matches(password, stored):
+    return hmac.compare_digest(password_hash(password, stored.split(":")[0]), stored)
+
+
+class Arena:
+    def __init__(self, data_path=None, seed=None):
+        self.path = Path(data_path or ROOT / "data" / "accounts.json")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.rng = random.Random(seed)
+        self.lock = threading.RLock()
+        self.users = json.loads(self.path.read_text("utf-8")) if self.path.exists() else {}
+        if not self.path.exists(): self.save()
+        self.sessions = {}
+        self.resets = {}
+        self.fighters = {}
+        self.events = []
+        self.clock = 0.
+        self.running = True
+        self.bot_serial = 0
+        self.bot_depths = [2,3,4,5]
+        self.rng.shuffle(self.bot_depths)
+        self.maintain_bots()
+
+    def save(self):
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(self.users, indent=2), "utf-8")
+        temporary.replace(self.path)
+
+    def profile(self, user):
+        return {k: user[k] for k in ("username", "coins", "inventory", "weapon", "shield", "armour", "kills", "deaths")}
+
+    def account(self, name, email="", password=""):
+        return dict(username=name, email=email.lower(), password=password_hash(password) if password else "",
+                    coins=100, inventory=["knife"], weapon="knife", shield="", armour="", kills=0, deaths=0)
+
+    def session(self, user, guest=False):
+        token = secrets.token_urlsafe(32)
+        self.sessions[token] = dict(user=user, guest=guest, touched=time.monotonic(), fighter="")
+        return dict(token=token, profile=self.profile(user))
+
+    def spawn(self, identifier, name, bot=False, depth=0):
+        angle = self.rng.random() * math.tau
+        radius = self.rng.uniform(7, 16)
+        f = dict(id=identifier, name=name, bot=bot, depth=depth, x=math.sin(angle)*radius, z=math.cos(angle)*radius,
+                 yaw=angle+math.pi, hp=100., stamina=100., weapon="knife", shield="", armour="", kills=0, deaths=0,
+                 cooldown=0., windup=0., attack="", attack_id=0, block=False, block_since=-999., jump=0., dodge=0., dead=0., spawn_safe=1.5,
+                 input={}, last_input=0., last_attack=False, last_dodge=False, last_jump=False, plan_at=0., action="advance")
+        if bot:
+            f["weapon"] = self.rng.choice(["knife", "arming", "sabre", "longsword"])
+            if depth >= 4:
+                f["armour"] = "leather"
+                f["shield"] = "buckler"
+        self.fighters[identifier] = f
+        return f
+
+    def maintain_bots(self):
+        humans = sum(not f["bot"] for f in self.fighters.values())
+        wanted = max(0, 10-humans)
+        bots = [f for f in self.fighters.values() if f["bot"]]
+        while len(bots) < wanted:
+            self.bot_serial += 1
+            f = self.spawn(f"bot-{self.bot_serial}", BOT_NAMES[(self.bot_serial-1) % len(BOT_NAMES)], True,
+                           self.bot_depths[(self.bot_serial-1) % 4])
+            bots.append(f)
+        for f in bots[wanted:]:
+            del self.fighters[f["id"]]
+
+    def authenticate(self, token):
+        s = self.sessions.get(token)
+        if not s:
+            raise ValueError("Please sign in again.")
+        s["touched"] = time.monotonic()
+        return s
+
+    def join(self, s):
+        if s["fighter"] in self.fighters:
+            return s["fighter"]
+        # One combatant per registered account, even across multiple sessions.
+        if not s["guest"]:
+            for other in self.sessions.values():
+                if other is not s and other["user"] is s["user"] and other["fighter"] in self.fighters:
+                    self.fighters.pop(other["fighter"], None)
+                    other["fighter"] = ""
+        pid = "p-" + secrets.token_hex(5)
+        f = self.spawn(pid, s["user"]["username"])
+        for k in ("weapon", "shield", "armour", "kills", "deaths"):
+            f[k] = s["user"][k]
+        s["fighter"] = pid
+        self.maintain_bots()
+        return pid
+
+    def request(self, route, body, token=""):
+        with self.lock:
+            if route == "/health":
+                return dict(ok=True, name="Xervexl", company="motlon", version="0.1.0", mail_ready=bool(os.getenv("SMTP_HOST")))
+            if route == "/auth/register":
+                name = str(body.get("username", "")).strip()
+                email = str(body.get("email", "")).strip().lower()
+                password = str(body.get("password", ""))
+                if not re.fullmatch(r"[A-Za-z0-9_]{3,20}", name):
+                    raise ValueError("Username: 3-20 letters, numbers or underscore.")
+                if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or len(email) > 254:
+                    raise ValueError("Enter a valid email address.")
+                if len(password) < 8 or len(password) > 128:
+                    raise ValueError("Password: 8-128 characters.")
+                if name.lower() in self.users or any(u["email"] == email for u in self.users.values()):
+                    raise ValueError("Username or email is already registered.")
+                user = self.account(name, email, password)
+                self.users[name.lower()] = user
+                self.save()
+                return self.session(user)
+            if route == "/auth/login":
+                user = self.users.get(str(body.get("username", "")).lower())
+                password = str(body.get("password", ""))[:128]
+                # Equal-cost hashing also for unknown accounts.
+                stored = user["password"] if user else "00"*16 + ":" + "00"*32
+                valid = password_matches(password, stored)
+                if not user or not valid:
+                    raise ValueError("Username or password is incorrect.")
+                return self.session(user)
+            if route == "/auth/guest":
+                return self.session(self.account("Guest-"+secrets.token_hex(2)), True)
+            if route == "/auth/forgot":
+                if not os.getenv("SMTP_HOST"):
+                    raise ValueError("Email recovery is not configured on this server yet.")
+                name = str(body.get("username", "")).lower()
+                email = str(body.get("email", "")).strip().lower()
+                user = self.users.get(name)
+                if user and user["email"] == email:
+                    code = secrets.token_urlsafe(24)
+                    self.resets[hashlib.sha256(code.encode()).hexdigest()] = (name, time.monotonic()+900)
+                    threading.Thread(target=self.send_reset, args=(email, code), daemon=True).start()
+                return dict(message="If the username and email match, a reset code will be emailed.")
+            if route == "/auth/reset":
+                code_hash = hashlib.sha256(str(body.get("code", "")).encode()).hexdigest()
+                entry = self.resets.get(code_hash)
+                password = str(body.get("password", ""))
+                if not entry or entry[1] < time.monotonic():
+                    raise ValueError("Reset code is invalid or expired.")
+                if not 8 <= len(password) <= 128:
+                    raise ValueError("Password: 8-128 characters.")
+                user = self.users[entry[0]]
+                user["password"] = password_hash(password)
+                self.resets.pop(code_hash)
+                for key, s in list(self.sessions.items()):
+                    if s["user"] is user:
+                        self.fighters.pop(s["fighter"], None)
+                        del self.sessions[key]
+                self.maintain_bots()
+                self.save()
+                return dict(message="Password updated. Sign in with your new password.")
+            s = self.authenticate(token)
+            user = s["user"]
+            if route == "/me":
+                return dict(profile=self.profile(user), catalog=CATALOG)
+            if route in ("/shop/buy", "/shop/equip"):
+                item_id = str(body.get("item", ""))
+                if item_id not in ITEMS:
+                    raise ValueError("Unknown item.")
+                item = ITEMS[item_id]
+                if route == "/shop/buy" and item_id not in user["inventory"]:
+                    if user["coins"] < item["price"]:
+                        raise ValueError("Not enough crowns. Earn crowns in the arena.")
+                    user["coins"] -= item["price"]
+                    user["inventory"].append(item_id)
+                if item_id not in user["inventory"]:
+                    raise ValueError("You do not own that item.")
+                kind = item.get("kind", "weapon")
+                user[kind] = item_id
+                if s["fighter"] in self.fighters:
+                    self.fighters[s["fighter"]][kind] = item_id
+                if not s["guest"]:
+                    self.save()
+                return dict(profile=self.profile(user))
+            if route == "/arena/join":
+                return dict(player=self.join(s), profile=self.profile(user))
+            if route == "/arena/leave":
+                self.fighters.pop(s["fighter"], None)
+                s["fighter"] = ""
+                self.maintain_bots()
+                return dict(ok=True)
+            if route == "/arena/state":
+                f = self.fighters.get(s["fighter"])
+                if f:
+                    # Positions, damage and rewards are NEVER accepted from the client.
+                    movement = body.get("move", [0, 0])
+                    try:
+                        mx, mz = float(movement[0]), float(movement[1])
+                        yaw = float(body.get("yaw", f["yaw"]))
+                        if not all(math.isfinite(v) for v in (mx, mz, yaw)):
+                            raise ValueError()
+                    except (ValueError, TypeError, IndexError):
+                        raise ValueError("Invalid movement.")
+                    f["input"] = dict(move=[clamp(mx,-1,1), clamp(mz,-1,1)], yaw=wrap(yaw),
+                                      attack=body.get("attack", "") if body.get("attack", "") in ("left","right","overhead","thrust") else "",
+                                      block=bool(body.get("block")), dodge=bool(body.get("dodge")), jump=bool(body.get("jump")))
+                    f["last_input"] = self.clock
+                public = []
+                for a in self.fighters.values():
+                    public.append({k:a[k] for k in ("id","name","bot","depth","x","z","yaw","hp","stamina","weapon","shield","armour","kills","deaths","block","jump","dodge","dead","attack","attack_id","windup","spawn_safe")})
+                return dict(player=s["fighter"], time=self.clock, fighters=public, events=self.events[-5:],
+                            profile=self.profile(user), humans=sum(not a["bot"] for a in public), bots=sum(a["bot"] for a in public))
+            raise ValueError("Unknown endpoint.")
+
+    def send_reset(self, email, code):
+        try:
+            msg = EmailMessage()
+            msg["From"] = os.getenv("SMTP_FROM", os.getenv("SMTP_USER", ""))
+            msg["To"] = email
+            msg["Subject"] = "Xervexl password reset"
+            msg.set_content(f"Your one-use reset code is:\n\n{code}\n\nIt expires in 15 minutes. If you did not request it, ignore this message.")
+            with smtplib.SMTP(os.environ["SMTP_HOST"], int(os.getenv("SMTP_PORT", "587")), timeout=15) as smtp:
+                smtp.starttls()
+                if os.getenv("SMTP_USER"):
+                    smtp.login(os.environ["SMTP_USER"], os.environ["SMTP_PASSWORD"])
+                smtp.send_message(msg)
+        except Exception:
+            print("Password recovery email could not be delivered. Check SMTP configuration.", flush=True)
+
+    def plan_bot(self, bot, opponent):
+        """Actual depth 2..5 adversarial beam search over a simplified combat model.
+
+        Each ply forecasts approach/retreat, attacks, blocking and opponent replies.
+        This deliberately bounded approximation does not solve optimal human play.
+        """
+        distance = math.hypot(opponent["x"]-bot["x"], opponent["z"]-bot["z"])
+        own = ITEMS[bot["weapon"]]
+        enemy = ITEMS[opponent["weapon"]]
+        actions = ("advance", "retreat", "strafe_l", "strafe_r", "block", "left", "overhead", "thrust", "dodge")
+        beam = [(0., distance, bot["hp"], opponent["hp"], bot["stamina"], "", bot["cooldown"], opponent["cooldown"])]
+        threat = opponent["windup"] > 0 or bool(opponent["input"].get("attack"))
+        for ply in range(bot["depth"]):
+            next_beam = []
+            for previous_score, dist, hp, ehp, stamina, first, cd, ecd in beam:
+                for action in actions:
+                    d, h, e, st = dist, hp, ehp, stamina
+                    own_cd, enemy_cd = max(0.,cd-.25), max(0.,ecd-.25)
+                    if action == "advance": d = max(.9,d-1.05)
+                    if action == "retreat": d += .8
+                    if action.startswith("strafe"): d += .12
+                    if action == "dodge":
+                        if st < 24: continue
+                        st -= 24
+                        d += .9
+                    if action in ("left", "overhead", "thrust"):
+                        cost = 20 if action == "overhead" else 12
+                        if st < cost or own_cd > 0: continue
+                        st -= cost
+                        reach = own["reach"] + (.35 if action=="thrust" else 0)
+                        if d < reach:
+                            e -= own["damage"] * (1.2 if action == "overhead" else .85 if action == "thrust" else 1.) * (.45 if opponent["block"] else 1.)
+                        own_cd = own["cooldown"] + (.18 if action == "overhead" else -.05 if action == "thrust" else 0)
+                    # Best plausible reply: attack in range; otherwise close the gap.
+                    if enemy_cd <= 0 and d < enemy["reach"] + .2:
+                        incoming = enemy["damage"] * (1.4 if threat and ply == 0 else .55)
+                        if action == "block" and st > 8:
+                            incoming *= .15
+                            st -= 8
+                        elif action == "dodge": incoming *= .08
+                        elif action.startswith("strafe"): incoming *= .65
+                        h -= incoming
+                        enemy_cd = enemy["cooldown"]
+                    else: d = max(.8,d-.5)
+                    st = min(100, st+4)
+                    # Discount future gains so replanning does not endlessly defer attacks.
+                    gain = (ehp-e)*1.45 - (hp-h)*1.15 + (dist-d)*1.5
+                    if action == "block" and not threat: gain -= 2.
+                    if action == "retreat" and bot["hp"]>35: gain -= 1.
+                    score = previous_score + gain*(.76**ply) - abs(d-own["reach"]*.78)*.25
+                    if h <= 0: score -= 180
+                    if e <= 0: score += 140
+                    # Small stable preference prevents permanent block/retreat equilibria.
+                    if action == "advance": score += .35*(.76**ply)
+                    next_beam.append((score,d,h,e,st,first or action,own_cd,enemy_cd))
+            next_beam.sort(key=lambda n:n[0], reverse=True)
+            beam = next_beam[:7]
+        return beam[0][5] if beam else "advance"
+
+    def bot_input(self, f):
+        enemies = [a for a in self.fighters.values() if a["id"] != f["id"] and a["dead"] <= 0]
+        if not enemies:
+            return {}
+        target = min(enemies,key=lambda a:math.hypot(a["x"]-f["x"],a["z"]-f["z"]))
+        if self.clock >= f["plan_at"]:
+            f["action"] = self.plan_bot(f,target)
+            f["plan_at"] = self.clock + .22 + (5-f["depth"])*.075
+        yaw = math.atan2(target["x"]-f["x"],target["z"]-f["z"])
+        action = f["action"]
+        mx,mz = math.sin(yaw),math.cos(yaw)
+        if action == "retreat": mx,mz = -mx,-mz
+        elif action == "strafe_l": mx,mz = -mz,mx
+        elif action == "strafe_r": mx,mz = mz,-mx
+        elif action not in ("advance", "dodge"): mx,mz = 0,0
+        attack = action if action in ("left","overhead","thrust") else ""
+        # Repeated attacks are separated by a released input edge.
+        if f["last_attack"]: attack = ""
+        return dict(move=[mx,mz],yaw=yaw,attack=attack,block=action=="block",dodge=action=="dodge" and not f["last_dodge"],jump=False)
+
+    def tick(self, dt):
+        with self.lock:
+            self.clock += dt
+            now = time.monotonic()
+            for token,s in list(self.sessions.items()):
+                if now-s["touched"] > 60:
+                    self.fighters.pop(s["fighter"],None)
+                    del self.sessions[token]
+            self.maintain_bots()
+            for f in list(self.fighters.values()):
+                if f["dead"] > 0:
+                    f["dead"] -= dt
+                    if f["dead"] <= 0:
+                        f["dead"] = 0
+                        angle = self.rng.random()*math.tau
+                        f.update(x=math.sin(angle)*18,z=math.cos(angle)*18,hp=100.,stamina=100.,cooldown=0.,windup=0.,attack="",block=False,spawn_safe=1.5)
+                    continue
+                if f["bot"]: inp = self.bot_input(f)
+                else: inp = f["input"] if self.clock-f["last_input"] < .5 else {}
+                f["spawn_safe"] = max(0.,f["spawn_safe"]-dt)
+                f["yaw"] = inp.get("yaw",f["yaw"])
+                f["cooldown"] = max(0.,f["cooldown"]-dt)
+                f["dodge"] = max(0.,f["dodge"]-dt)
+                f["jump"] = max(0.,f["jump"]-dt)
+                was_blocking = f["block"]
+                f["block"] = bool(inp.get("block")) and f["stamina"] > 5 and f["windup"] <= 0
+                if f["block"] and not was_blocking: f["block_since"] = self.clock
+                if inp.get("dodge") and not f["last_dodge"] and f["stamina"] >= 24 and f["dodge"]<=0:
+                    f["dodge"] = .32
+                    f["stamina"] -= 24
+                if inp.get("jump") and not f["last_jump"] and f["jump"]<=0 and f["stamina"] >= 8:
+                    f["jump"] = .55
+                    f["stamina"] -= 8
+                f["last_dodge"] = bool(inp.get("dodge"))
+                f["last_jump"] = bool(inp.get("jump"))
+                move = inp.get("move",[0,0])
+                length = max(1.,math.hypot(*move))
+                speed = 4.4*(.62 if f["block"] else 1.)*(2.5 if f["dodge"]>0 else 1.)
+                if f["armour"] == "plate": speed *= .88
+                f["x"] += move[0]/length*speed*dt
+                f["z"] += move[1]/length*speed*dt
+                radius = math.hypot(f["x"],f["z"])
+                if radius > 38:
+                    f["x"] *= 38/radius
+                    f["z"] *= 38/radius
+                f["stamina"] = min(100.,f["stamina"]+dt*(8 if f["block"] else 18))
+                attack = inp.get("attack", "")
+                cost = 20 if attack == "overhead" else 12
+                if attack and not f["last_attack"] and f["cooldown"]<=0 and f["stamina"]>=cost and not f["block"]:
+                    f["attack"] = attack
+                    f["attack_id"] += 1
+                    f["windup"] = .22 if attack == "overhead" else .16
+                    f["cooldown"] = ITEMS[f["weapon"]]["cooldown"] + (.18 if attack == "overhead" else -.05 if attack == "thrust" else 0)
+                    f["stamina"] -= cost
+                f["last_attack"] = bool(attack)
+                if f["windup"] > 0:
+                    f["windup"] -= dt
+                    if f["windup"] <= 0: self.strike(f)
+                if f["cooldown"] <= 0: f["attack"] = ""
+            alive = [f for f in self.fighters.values() if f["dead"]<=0]
+            for i,a in enumerate(alive):
+                for b in alive[i+1:]:
+                    dx,dz = b["x"]-a["x"],b["z"]-a["z"]
+                    dist = math.hypot(dx,dz)
+                    if .001 < dist < .78:
+                        push = (.78-dist)*.5
+                        a["x"] -= dx/dist*push; a["z"] -= dz/dist*push
+                        b["x"] += dx/dist*push; b["z"] += dz/dist*push
+
+    def strike(self, attacker):
+        if attacker["spawn_safe"]>0: return
+        item = ITEMS[attacker["weapon"]]
+        reach = item["reach"] + (.35 if attacker["attack"] == "thrust" else 0)
+        arc = .30 if attacker["attack"] == "thrust" else (.46 if attacker["attack"]=="overhead" else 1.05)
+        for victim in self.fighters.values():
+            if victim is attacker or victim["dead"]>0 or victim["dodge"]>0 or victim["spawn_safe"]>0: continue
+            dx,dz = victim["x"]-attacker["x"],victim["z"]-attacker["z"]
+            distance = math.hypot(dx,dz)
+            if distance > reach or abs(wrap(math.atan2(dx,dz)-attacker["yaw"]))>arc: continue
+            damage = item["damage"]*(1.2 if attacker["attack"]=="overhead" else .85 if attacker["attack"]=="thrust" else 1.)
+            facing = abs(wrap(math.atan2(-dx,-dz)-victim["yaw"]))<1.15
+            if victim["block"] and facing and victim["stamina"]>=10:
+                if self.clock-victim["block_since"] <= .18:
+                    victim["stamina"] -= 8
+                    attacker["cooldown"] = max(attacker["cooldown"],.85)
+                    self.events.append(dict(kind="parry",source=attacker["id"],target=victim["id"],time=self.clock))
+                    self.events = self.events[-40:]
+                    return
+                reduction = ITEMS.get(victim["shield"],{}).get("reduction",.52)
+                damage *= 1-reduction
+                victim["stamina"] = max(0,victim["stamina"]-18)
+            damage *= 1-ITEMS.get(victim["armour"],{}).get("reduction",0)
+            victim["hp"] = max(0.,victim["hp"]-damage)
+            self.events.append(dict(kind="hit", source=attacker["id"],target=victim["id"],damage=round(damage),time=self.clock))
+            if victim["hp"]<=0:
+                victim["dead"] = 3.5
+                victim["deaths"] += 1
+                attacker["kills"] += 1
+                self.events.append(dict(kind="kill",source=attacker["name"],target=victim["name"],time=self.clock))
+                for s in self.sessions.values():
+                    if s["fighter"] == attacker["id"]:
+                        s["user"]["coins"] += 45
+                        s["user"]["kills"] = attacker["kills"]
+                        if not s["guest"]: self.save()
+                    if s["fighter"] == victim["id"]:
+                        s["user"]["deaths"] = victim["deaths"]
+                        if not s["guest"]: self.save()
+            self.events = self.events[-40:]
+
+    def run(self):
+        previous = time.monotonic()
+        while self.running:
+            current = time.monotonic()
+            self.tick(min(.1,current-previous))
+            previous = current
+            time.sleep(1/30)
+
+
+class Handler(BaseHTTPRequestHandler):
+    arena = None
+    limits = {}
+    limits_lock = threading.Lock()
+
+    def do_GET(self):
+        self.handle_api({})
+
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length",0))
+            if length > 16384 or length < 0: raise ValueError("Request too large.")
+            body = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(body,dict): raise ValueError("Expected an object.")
+            self.handle_api(body)
+        except (ValueError,json.JSONDecodeError):
+            self.respond(400,dict(error="Invalid request."))
+
+    def handle_api(self, body):
+        try:
+            if self.path.startswith("/auth/"):
+                # Fixed window per source; isolates credential requests from arena polling.
+                ip = self.client_address[0]
+                with self.limits_lock:
+                    count,start = self.limits.get(ip,(0,time.monotonic()))
+                    if time.monotonic()-start > 60: count,start = 0,time.monotonic()
+                    self.limits[ip] = (count+1,start)
+                if count >= 30:
+                    self.respond(429,dict(error="Too many account requests. Wait one minute.")); return
+            token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+            self.respond(200,self.arena.request(self.path,body,token))
+        except ValueError as error:
+            self.respond(400,dict(error=str(error)))
+        except Exception:
+            self.respond(500,dict(error="Server error. Check server console."))
+
+    def respond(self, status, value):
+        encoded = json.dumps(value,separators=(",",":")).encode()
+        self.send_response(status)
+        self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(encoded)))
+        self.send_header("Cache-Control","no-store")
+        self.end_headers()
+        try: self.wfile.write(encoded)
+        except (BrokenPipeError,ConnectionResetError): pass
+
+    def log_message(self,*args):
+        pass
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host",default="127.0.0.1")
+    parser.add_argument("--port",type=int,default=8765)
+    parser.add_argument("--data",type=Path,default=ROOT/"data"/"accounts.json")
+    args = parser.parse_args()
+    Handler.arena = Arena(args.data)
+    server = ThreadingHTTPServer((args.host,args.port),Handler)
+    threading.Thread(target=Handler.arena.run,daemon=True).start()
+    print(f"Xervexl / motlon — server at http://{args.host}:{args.port}",flush=True)
+    try: server.serve_forever()
+    except KeyboardInterrupt: pass
+    finally:
+        Handler.arena.running = False
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

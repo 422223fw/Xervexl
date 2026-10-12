@@ -1,0 +1,14 @@
+{
+  "name": "Xervexl",
+  "company": "motlon",
+  "version": "0.1.0",
+  "type": "native_windows_sword_arena",
+  "renderers": ["OpenGL", "Vulkan"],
+  "default_server": "http://127.0.0.1:8765",
+  "minimum_combatants": 10,
+  "bot_search_depths": [2, 3, 4, 5],
+  "account_storage": "data/accounts.json",
+  "account_storage_private": true,
+  "public_hosting_configured": false,
+  "smtp_configured": false
+}

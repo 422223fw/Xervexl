@@ -1,0 +1,10 @@
+# Validation — 12 October 2026
+
+- Native C++20 executable built successfully using the installed portable WinLibs GCC 16.2.0 toolchain. Windows system APIs and the installed Vulkan loader are the runtime dependencies; no MinGW runtime DLL needs to be installed.
+- **13 regression/integration tests passed**, including real HTTP requests from two independent sessions, shared movement, bot replacement, hashed/persistent accounts, equipment economics, authority, timed parry, damage, respawn, stale input and one-use password reset.
+- A deterministic **30-second bot simulation** produced **164 attacks and 16 eliminations**. This checks that receding-horizon planning does not endlessly postpone attacks. It does not measure difficulty against human players or prove optimal play.
+- Real native OpenGL and Vulkan clients ran at the same time and joined the same local server. The OpenGL capture reported **2 humans, 8 bots, 10 total fighters**. The Vulkan client still had 10 total fighters after the other client's departure, with filler bots returning.
+- The last simultaneous run rendered **192 OpenGL frames in 4.00 seconds** and **228 Vulkan frames in 4.00 seconds** (approximately 48 and 57 fps). These are short smoke measurements on this computer, not benchmark or scalability guarantees.
+- Home, arena and armoury frames were read from the respective GPU render targets and visually inspected. OpenGL and Vulkan both created real GPU-backed renderers; Vulkan loaded the assembled SPIR-V graphics pipeline successfully. Desktop capture was unavailable under Windows' existing time-limit screen; no parental/time-limit settings were changed.
+- Public internet deployment, router/firewall reachability, SMTP email delivery, long-duration operation and large-player load have **not** been tested. They require a host and mail service, which have not been supplied.
+- The runtime account JSON, tokens, logs, build tools and local screenshots are excluded from source control and the portable package.
