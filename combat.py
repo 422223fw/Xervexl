@@ -11,6 +11,8 @@ def angle(a): return (a+math.pi)%math.tau-math.pi
 class Combat:
     def emit(self,kind,**fields):
         self.event_serial += 1
+        actor=next((self.fighters.get(fields.get(k)) for k in ("source_id","target_id","source","target") if self.fighters.get(fields.get(k))),None)
+        fields.setdefault("world_id",actor["world_id"] if actor else self.default_world)
         self.events.append(dict(id=self.event_serial,kind=kind,time=self.clock,**fields))
         self.events=self.events[-80:]
 
@@ -53,6 +55,7 @@ class Combat:
         f["disarmed"]=1.0 if disarmer else .3
         yaw=f["yaw"]+.8
         self.drops.append(dict(id="drop-"+secrets.token_hex(4),weapon=item,owner=f["id"],
+            world_id=f["world_id"],
             x=f["x"],y=1.25,z=f["z"],vx=math.sin(yaw)*2.5,vz=math.cos(yaw)*2.5,vy=3.2,age=0.,expires=self.clock+25))
         self.emit("disarm" if disarmer else "drop",source=disarmer["id"] if disarmer else f["id"],target=f["id"],weapon=item)
         if disarmer:
@@ -62,7 +65,7 @@ class Combat:
 
     def pickup_weapon(self,f):
         if f["dead"]>0 or f["disarmed"]>0:return False
-        nearby=[d for d in self.drops if d["age"]>=.45 and math.hypot(d["x"]-f["x"],d["z"]-f["z"])<1.7]
+        nearby=[d for d in self.drops if d["world_id"]==f["world_id"] and d["age"]>=.45 and math.hypot(d["x"]-f["x"],d["z"]-f["z"])<1.7]
         if not nearby:return False
         chosen=min(nearby,key=lambda d:math.hypot(d["x"]-f["x"],d["z"]-f["z"]))
         if f["weapon"]!="fists":self.drop_weapon(f)
@@ -72,12 +75,13 @@ class Combat:
         return True
 
     def damage(self,attacker,victim,base,zone,kind="hit",magic="",pierce=0.):
-        if victim["dead"]>0 or victim["spawn_safe"]>0 or attacker["spawn_safe"]>0:return
+        if victim["dead"]>0 or victim["spawn_safe"]>0 or attacker["spawn_safe"]>0 or not self.same_world(attacker,victim):return
         armour=ITEMS.get(victim["armour"],{}).get("reduction",0)*(1-pierce)
         if zone=="head":armour=ITEMS.get(victim["helmet"],{}).get("reduction",0)
         amount=min(75.,base*BODY_MULTIPLIERS[zone]*(1-armour))
         absorbed=min(victim["ward"],amount);victim["ward"]-=absorbed;amount-=absorbed
         victim["hp"]=max(0.,victim["hp"]-amount)
+        if kind!="burn":self.balanced_hit(victim,amount,zone)
         if magic=="frost" and amount>0:victim["slow"]=2.5
         if magic=="lightning" and amount>0:
             victim["stamina"]=max(0,victim["stamina"]-12)
@@ -96,26 +100,29 @@ class Combat:
                       xp=reward["xp"],skill=reward["skill"],coins=reward["coins"],lost_skill=actual_loss)
 
     def strike(self,attacker):
-        if attacker["spawn_safe"]>0 or attacker["dead"]>0 or attacker["disarmed"]>0:return
+        if attacker["spawn_safe"]>0 or attacker["dead"]>0 or attacker["disarmed"]>0 or attacker["fall"]>0:return
         item=ITEMS[attacker["weapon"]]
+        if item["family"]=="rope":self.fire_rope(attacker);return
         if item["family"] in RANGED:
             self.shoot(attacker,item)
             return
         reach=item["reach"]+(.35 if attacker["attack"]=="thrust" else 0)
         arc=.30 if attacker["attack"]=="thrust" else .46 if attacker["attack"]=="overhead" else 1.05
         for victim in list(self.fighters.values()):
-            if victim is attacker or victim["dead"]>0 or victim["dodge"]>0 or victim["spawn_safe"]>0:continue
+            if victim is attacker or victim["dead"]>0 or victim["dodge"]>0 or victim["spawn_safe"]>0 or not self.same_world(attacker,victim):continue
             dx,dz=victim["x"]-attacker["x"],victim["z"]-attacker["z"]
             if math.hypot(dx,dz)>reach or abs(angle(math.atan2(dx,dz)-attacker["yaw"]))>arc:continue
             facing=abs(angle(math.atan2(-dx,-dz)-victim["yaw"]))<1.15
             armed=ITEMS[victim["weapon"]]["family"]!="unarmed"
+            matching=self.guard_matches(attacker,victim)
             if victim["block"] and facing and armed:
-                if self.clock-victim["block_since"]<=.18:
+                tight=abs(angle(math.atan2(-dx,-dz)-victim["yaw"]))<.55
+                if self.clock-victim["block_since"]<=.18 and tight and matching:
                     # A timed blade parry consumes exactly zero stamina.
                     attacker["cooldown"]=max(attacker["cooldown"],.85)
                     self.parry_reward(victim,attacker)
                     self.emit("parry",source=attacker["id"],target=victim["id"],damage=0)
-                    if attacker["stamina"]<20:self.drop_weapon(attacker,victim)
+                    self.drop_weapon(attacker,victim);attacker["cooldown"]=max(attacker["cooldown"],.85)
                     return
             if attacker["attack"]=="disarm":
                 vulnerable=victim["stamina"]<35 or (victim["cooldown"]>.1 and not victim["block"])
@@ -123,10 +130,10 @@ class Combat:
                 continue
             multiplier=1.2 if attacker["attack"]=="overhead" else .85 if attacker["attack"]=="thrust" else 1.
             base=item["damage"]*multiplier
-            if victim["block"] and facing and victim["stamina"]>=10 and armed:
-                base*=1-ITEMS.get(victim["shield"],{}).get("reduction",.52)
-                victim["stamina"]=max(0,victim["stamina"]-18)
-            height=TARGET_HEIGHTS[attacker.get("aim_zone","body")]+self.lift(attacker)-self.lift(victim)
+            if victim["block"] and facing and armed:
+                if matching:base=0
+                else:base*=1-ITEMS.get(victim["shield"],{}).get("reduction",.35)
+            height=TARGET_HEIGHTS[attacker.get("aim_zone","body")]+self.lift(attacker)-self.lift(victim)+(1.1 if victim["fall"]>0 else 0)
             if not .12<=height<=2.2:continue
             self.damage(attacker,victim,base,zone_from_height(height),magic=item.get("magic",""),pierce=item.get("armour_pierce",0))
 
@@ -136,6 +143,7 @@ class Combat:
         speed=item.get("speed",20)
         height=TARGET_HEIGHTS[attacker.get("aim_zone","body")]
         self.projectiles.append(dict(id="arrow-"+secrets.token_hex(4),owner=attacker["id"],weapon=attacker["weapon"],
+            world_id=attacker["world_id"],origin_x=attacker["x"],origin_y=1.35+self.lift(attacker),origin_z=attacker["z"],
             kind=spell or item.get("family","bow"),magic="frost" if spell=="frostbolt" else "fire" if spell=="firebolt" else item.get("magic",""),
             x=attacker["x"]+math.sin(yaw)*.6,y=1.35+self.lift(attacker),z=attacker["z"]+math.cos(yaw)*.6,
             vx=math.sin(yaw)*speed,vz=math.cos(yaw)*speed,vy=(height-1.35)*2-pitch*speed*.15,
@@ -169,15 +177,15 @@ class Combat:
             p["x"]+=p["vx"]*dt;p["y"]+=p["vy"]*dt;p["z"]+=p["vz"]*dt
             if p["age"]>p["life"] or p["y"]<.05:continue
             attacker=self.fighters.get(p["owner"])
-            if not attacker:continue
+            if not attacker or attacker["world_id"]!=p["world_id"]:continue
             consumed=False
             for victim in self.fighters.values():
-                if victim["id"]==p["owner"] or victim["dead"]>0 or victim["spawn_safe"]>0 or victim["dodge"]>0:continue
+                if victim["id"]==p["owner"] or victim["dead"]>0 or victim["spawn_safe"]>0 or victim["dodge"]>0 or victim["world_id"]!=p["world_id"]:continue
                 # Swept segment versus the upright hit capsule; avoids fast-bolt tunnelling.
                 dx,dz=p["x"]-old[0],p["z"]-old[2];den=dx*dx+dz*dz
                 t=max(0,min(1,((victim["x"]-old[0])*dx+(victim["z"]-old[2])*dz)/den)) if den else 0
                 cx,cy,cz=old[0]+t*dx,old[1]+t*(p["y"]-old[1]),old[2]+t*dz
-                height=cy-self.lift(victim)
+                height=cy-self.lift(victim)+(1.1 if victim["fall"]>0 else 0)
                 if math.hypot(cx-victim["x"],cz-victim["z"])>.45 or not .12<=height<=2.2:continue
                 facing=abs(angle(math.atan2(-p["vx"],-p["vz"])-victim["yaw"]))<1.15
                 blade=ITEMS[victim["weapon"]]["family"] in ("blade","spear","axe","mace")
@@ -186,12 +194,14 @@ class Combat:
                 if blade and facing and (timed or swinging) and p["bounces"]<2:
                     self.parry_reward(victim,attacker,True)
                     speed=max(.001,math.hypot(p["vx"],p["vz"]))
-                    p.update(owner=victim["id"],vx=-p["vx"],vz=-p["vz"],vy=0.,x=cx-p["vx"]/speed*.6,y=cy,z=cz-p["vz"]/speed*.6,bounces=p["bounces"]+1)
+                    dx,dy,dz=p.get("origin_x",attacker["x"])-cx,p.get("origin_y",1.35)-cy,p.get("origin_z",attacker["z"])-cz
+                    length=max(.001,math.sqrt(dx*dx+dy*dy+dz*dz))
+                    p.update(owner=victim["id"],vx=dx/length*speed,vz=dz/length*speed,vy=dy/length*speed,gravity=0.,x=cx+dx/length*.6,y=cy+dy/length*.6,z=cz+dz/length*.6,bounces=p["bounces"]+1,origin_x=cx,origin_y=cy,origin_z=cz)
                     self.emit("deflect",source=victim["id"],target=attacker["id"])
                     break
                 base=p["damage"]
-                if victim["block"] and facing and victim["shield"] and victim["stamina"]>=10:
-                    base*=1-ITEMS[victim["shield"]]["reduction"];victim["stamina"]-=12
+                if victim["block"] and facing:
+                    base*=1-ITEMS.get(victim["shield"],{}).get("reduction",.52)
                 self.damage(attacker,victim,base,zone_from_height(height),kind="projectile_hit",magic=p["magic"])
                 consumed=True;break
             if not consumed:alive.append(p)

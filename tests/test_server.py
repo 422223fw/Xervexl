@@ -86,7 +86,8 @@ class ArenaTests(unittest.TestCase):
         self.arena.strike(a)
         self.assertEqual(b["hp"],100)
         self.assertGreaterEqual(a["cooldown"],.85)
-        self.assertEqual(self.arena.events[-1]["kind"],"parry")
+        self.assertTrue(any(e["kind"]=="parry" for e in self.arena.events))
+        self.assertEqual(a["weapon"],"fists")
 
     def test_client_cannot_teleport_or_forge_rewards(self):
         token,f=self.guest();f.update(x=0,z=30);old_x=f["x"]

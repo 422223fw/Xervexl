@@ -1,6 +1,6 @@
 # Xervexl — motlon
 
-A playable Windows arena with **OpenGL and Vulkan in one native C++ executable**, an authoritative Python server, XP/ranks/skill, persistent accounts, a 39-item store and bots that fill empty slots. The same session survives changing graphics API in Settings. Procedural daylight, sand, stone walls, banners, trees, steel, projectiles and rare arcane weapons. There is no match winner or final round.
+A playable Windows arena with **OpenGL and Vulkan in one native C++ executable**, an authoritative Python server, XP/ranks/skill, persistent accounts, a 46-item store and bots that fill empty slots. The same session survives changing graphics API in Settings. Five shared procedural worlds offer desert, forest, snow, coast and volcanic scenery. There is no match winner or final round.
 
 ## Play
 
@@ -8,16 +8,19 @@ Double-click **Play-Xervexl.cmd**. It starts a hidden local arena server and ope
 
 The compiled game is `build/Xervexl.exe`. Auto mode prefers Vulkan and falls back to OpenGL. **Both APIs are in the same file**, selectable in **Settings → Auto / OpenGL / Vulkan**; they do not render the same frame simultaneously. A compatible GPU driver is required. `powershell -NoProfile -ExecutionPolicy Bypass -File start.ps1 -Vulkan` remains supported.
 
-**Enter the arena** works immediately as a guest. Sign in to keep equipment, crowns and progression. Everyone starts with a knife and 100 crowns. Eliminations earn XP, the victim's rank in skill, and rank-dependent crowns. Death removes skill, with a bigger penalty against a lower-rank killer. **SCORING.md** documents all formulas. New purchases equip automatically. Guest progress is temporary.
+**Enter the arena** works immediately as a guest. Sign in to keep equipment, crowns and progression. **New players start at rank 1, with 0 XP, 0 skill points, a knife and 100 crowns.** Existing accounts retain their progress. After signing in, the home screen greets you and replaces Sign in with Logout. Eliminations earn XP, the victim's rank in skill, and rank-dependent crowns. Death removes skill, with a bigger penalty against a lower-rank killer. **SCORING.md** documents all formulas. New purchases equip automatically and fill an empty quick-slot. Guest progress is temporary.
 
 | Control | Action |
 |---|---|
-| W / A / S / D | Move |
+| W / A / S / D | Move; walking direction also selects the sword move |
 | Mouse | Turn and look |
-| Left mouse button | Attack with selected move |
-| 1 / 2 / 3 / 4 | Left cut / right cut / overhead / thrust |
-| Right mouse button | Block facing an attack |
-| Right mouse just before impact | Timed parry; 180 ms window, zero stamina cost, XP + skill |
+| Left mouse button | Attack: A left cut, D right cut, W overhead, S thrust; mouse direction selects when standing |
+| 1 / 2 / 3 / 4 / 5 | Switch between owned quick-slot weapons |
+| I | Inventory: choose one of five slots and assign a purchased weapon |
+| Mouse wheel | Smooth zoom from bounded overhead view to first-person and back |
+| Right mouse button | Block; cancels your attack immediately, uses no stamina |
+| WASD / mouse while blocking | A left guard, D right guard, W high guard, S centre; mouse direction also selects |
+| Right mouse just before impact | Face and match the incoming attack within 180 ms to disarm; XP + skill |
 | Z / X / C | Aim at legs / body / head |
 | Q | Disarm an exhausted or recovering opponent |
 | G / F | Drop weapon / pick up nearby weapon |
@@ -29,11 +32,15 @@ The compiled game is `build/Xervexl.exe`. Auto mode prefers Vulkan and falls bac
 | Escape | Menu / resume; online combat keeps running |
 | F12 | Save game-frame screenshot in `screenshots/capture.bmp` |
 
-Overhead attacks cost more stamina and recover more slowly. Thrusts have extra reach and a narrow cone but lower damage. Shields improve blocks; armour/helmets protect different hit regions, and heavy gear slows movement. Timed blade parries and swings can reflect arrows. Borrowed weapons do not add permanent ownership. Dodges briefly evade strikes. Death respawns you after 3.5 seconds. New spawns have 1.5 seconds of entry grace during which they neither deal nor receive damage.
+Overhead attacks cost more stamina and recover more slowly. Thrusts have extra reach and a narrow cone but lower damage. Windup, stroke, recovery and directional guards use server animation timing. Your body follows walking direction; attack and guard turn it toward your aim. Facing an attack with the matching guard absorbs it without stamina loss. Counter a left cut with right guard, a right cut with left guard, and an overhead with high guard. A centred cross guard also covers horizontal cuts and thrusts. A correctly timed counter disarms even a full-stamina attacker. Holding guard does not repeatedly earn XP.
+
+Armour/helmets protect different hit regions, and heavy gear slows movement. Arrows have visible 3D shafts, heads and feathers. Face an arriving arrow and time a blade block to return it toward its launch position. Borrowed weapons do not add permanent ownership. Dodges briefly evade strikes. Death respawns you after 3.5 seconds. New spawns have 1.5 seconds of entry grace during which they neither deal nor receive damage.
+
+Repeated hits deplete balance and can knock you down. The expensive **Permanent footing** shop upgrade reduces that chance. Grappling rope pulls you toward a fighter or an aimed landmark; a lasso can trip and pull an opponent. Both are purchased weapons placed in your quick-slots.
 
 ## Multiplayer
 
-The server supplies enough bots to keep **at least ten total combatants**. When ten humans are connected, it removes all filler bots. Bot skill depths are shuffled among 2, 3, 4 and 5. Two native clients can fight in the same authoritative arena, including clients using different graphics APIs.
+The server supplies enough bots to keep **at least ten total combatants in each active world**. When ten humans share a world, it removes that world's filler bots. Bot skill depths are shuffled among 2, 3, 4 and 5. Two native clients can fight in the same authoritative arena, including clients using different graphics APIs. The Worlds screen lets you pick a biome or enter another random world. Automatic entry prefers a populated human world. Terrain landmarks are generated from server seeds and shared by all clients; damage, arrows, dropped weapons and ropes remain inside their world. Equipment and progress follow you between worlds.
 
 For another machine on your own network, run:
 
@@ -74,13 +81,13 @@ python tests/simulate_bots.py
 
 `build.ps1 -Compiler C:\path\to\g++.exe` supports another MinGW-w64 compiler. The checked-in headers and fixed SPIR-V assembler make the build reproducible without a Vulkan SDK, npm, or administrator installation. `tools/make_shaders.py` assembles only the two fixed shaders represented by `shaders/arena.vert` and `arena.frag`; if their logic changes, update the assembler or use a standard GLSL compiler.
 
-Smoke tests: `build/Xervexl.exe --smoke --opengl`, `--smoke --vulkan`, `--smoke --arena`, and `--smoke --arena --switch`. The last changes engines during one session. `--server=http://127.0.0.1:18765` allows an isolated preview server. Reports and **GPU-frame** screenshots are saved before exit. `--shop --ranged`, `--shop --arcane`, `--shop --health` and `--leaders` inspect these screens. Tests cover backed-up account migration, scoring, store balances, health upgrades, parry, disarm, projectile ownership, body regions, spells, respawn and multiplayer.
+Smoke tests: `build/Xervexl.exe --smoke --opengl`, `--smoke --vulkan`, `--smoke --arena`, and `--smoke --arena --switch`. The last changes engines during one session. `--server=http://127.0.0.1:18765` allows an isolated preview server. Reports and **GPU-frame** screenshots are saved before exit. `--shop --ranged`, `--shop --arcane`, `--shop --health`, `--leaders`, `--inventory` and `--worlds` inspect these screens. Arena options `--first-person`, `--overhead` and `--world=0` through `--world=4` inspect camera modes and biomes. Tests cover account migration/preservation, exact starting values, scoring, inventory, directional guard/cancellation, footing, ropes, room isolation, store balances, health upgrades, projectile ownership, body regions, spells, respawn and multiplayer.
 
 ## Prototype limits
 
-This is the first playable build, not a finished commercial game or a photorealistic production. The arena has a finite physical boundary and continuous play; it does **not** support literally infinite simultaneous people. There is no measured large-scale player capacity. Each server currently has one arena, and collision checks scale quadratically with population. There is no public hosting, matchmaking directory, moderation, account email verification, server deployment automation or production anti-cheat service.
+This is a playable prototype, not a finished commercial game or a photorealistic production. Each world has a finite physical boundary and continuous play; it does **not** support literally infinite simultaneous people. There is no measured large-scale player capacity. Each server has five shared arena rooms, and collision checks scale quadratically with population. There is no public hosting, matchmaking directory, moderation, account email verification, server deployment automation or production anti-cheat service.
 
-Bot search runs 2–5 plies with a seven-state beam, using a simplified forecast and nearest-opponent target. Bots use ranged weapons, disarm vulnerable opponents and recover dropped weapons. Rank and AI depth are distinct. This is not optimal play or general human reasoning. Melee uses distance/angle/height hit regions; projectiles use swept segments against upright capsules. These approximate collisions rather than per-bone meshes. Jumping changes impact height and is not an invulnerability power. The camera can pass through scenery. Economy and difficulty have not undergone a human playtest; rankings are per server.
+Bot search runs 2–5 plies with a seven-state beam, using a simplified forecast and nearest-opponent target. Bots use ranged weapons, direction-sensitive guard, disarm vulnerable opponents and recover dropped weapons in their own room. Rank and AI depth are distinct. This is not optimal play or general human reasoning. Melee uses distance/angle/height hit regions; projectiles use swept segments against fighter capsules. These approximate collisions rather than per-bone meshes. Jumping changes impact height and is not an invulnerability power. Falling uses an animated pose, not a physics ragdoll. Rope pulling uses simple temporary constraints, not a full rope/climbing simulation. The camera can pass through scenery. Economy and difficulty have not undergone a human playtest; rankings are per server.
 
 3D geometry is projected on the CPU and triangles are sorted before drawing. OpenGL uses a fixed-function triangle stream; Vulkan uses a real instance/device, swapchain, command buffers, vertex buffer, SPIR-V graphics pipeline and GPU presentation. There is no GPU depth buffer, advanced lighting, textures, animation skeleton, positional audio or modern postprocessing yet. The initial graphics are procedural and stylized.
 
@@ -92,4 +99,4 @@ See `THIRD_PARTY.md`. Art and short combat sounds are generated by the project. 
 
 ## הוראות קצרות
 
-לחצי פעמיים על **Play-Xervexl.cmd**, ואז **Enter the arena**. לתנועה: WASD ועכבר. לתקיפה: לחיצה שמאלית; 1–4 בוחרים מהלך. לחיצה ימנית חוסמת, Shift מתחמק ו־Space קופץ מעט. E פותח את החנות. להרשמה ושמירת ציוד: Sign in ואז Create account. המשחק עובד מקומית עם בוטים; שרת ציבורי ושירות מייל עדיין אינם מוגדרים.
+לחצי פעמיים על **Play-Xervexl.cmd**, ואז **Enter the arena**. חשבון חדש מתחיל בדרגה 1, עם 0 נקודות מיומנות ו־100 מטבעות. לתנועה: WASD ועכבר; כיוון התנועה בוחר את מהלך התקיפה בלחיצה שמאלית. לחיצה ימנית מבטלת התקפה וחוסמת בלי צריכת סיבולת. חסימה מתוזמנת בכיוון הנכון מפילה את חרב היריב או מחזירה חץ. 1–5 מחליפים נשקים, I פותח Inventory, וגלגלת העכבר עוברת ממבט מלמעלה לגוף ראשון. E פותח את החנות; Worlds בוחר עולם. להרשמה ושמירת ציוד: Sign in ואז Create account. אחרי התחברות מופיעים שלום ו־Logout. המשחק עובד מקומית עם בוטים; שרת ציבורי ושירות מייל עדיין אינם מוגדרים.

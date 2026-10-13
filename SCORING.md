@@ -1,6 +1,6 @@
-# Xervexl 0.2 — progression and combat rules
+# Xervexl 0.3 — progression and combat rules
 
-Implemented on the authoritative server in `rules.py`, `combat.py` and `server.py`. Clients cannot submit XP, skill, crowns, rank, health upgrades or hit rewards.
+Implemented on the authoritative server in `rules.py`, `combat.py`, `arena_features.py` and `server.py`. Clients cannot submit XP, skill, crowns, rank, upgrades or hit rewards. New accounts start at **rank 1, 0 XP, 0 skill points, 100 crowns and a knife**. Updating the game does not reset existing accounts.
 
 | Event | XP gained | Skill points | Crowns |
 |---|---:|---:|---:|
@@ -19,19 +19,23 @@ Leaderboards cover skill, rank, XP, current crowns and eliminations. They includ
 
 ## Combat
 
-- **Perfect parry:** face the attack and start blocking within 180 ms of impact. It costs zero stamina, staggers the attacker and awards XP/skill. Holding guard beyond this window drains stamina on absorbed hits. Empty hands cannot parry. A perfect parry can disarm an attacker with less than 20 stamina.
+- **Perfect parry:** face the attack tightly, match its direction and start/change guard within 180 ms of impact. It costs zero stamina, disarms the attacker regardless of their stamina, and awards both the parry and disarm rewards above. Match left cuts with right guard, right cuts with left guard, overheads with high guard, and thrusts with centre guard. Centre guard also covers horizontal cuts. Empty hands cannot parry. Holding an aligned guard absorbs melee damage with no stamina loss but no repeated XP reward. A mismatched guard provides only partial protection. Blocking cancels your ongoing attack immediately.
 - **Q disarm:** a deliberate windup costing 22 stamina. The victim must be exhausted (under 35 stamina) or recovering with their guard down. Failure awards nothing. Empty hands cannot be disarmed repeatedly.
 - **G drop / F pickup:** actual shared world weapons fall briefly and expire after 25 seconds. Picking up a borrowed weapon does not grant permanent ownership. Your purchased loadout returns after death. Being disarmed briefly staggers you before recovery.
 - **Z / X / C:** aim at legs, body or head. Damage multipliers are 0.68 / 1.0 / 1.45. Actual impact height also depends on jumping and projectile travel. Helmets protect head hits; armour protects other regions. Move and weapon damage also matter. Each direct damage event is capped at 75, so a fresh fighter with at least 100 health cannot be killed by a single direct hit.
-- **Bows, crossbows, slingshots:** server-simulated speed, gravity, travel time and swept collisions. Shields absorb some projectile damage. Facing an arrow with a timed blade parry or active weapon swing can reflect it. Ownership changes: subsequent damage and kill rewards belong to the defender. At most two reflections per projectile prevent endless ping-pong.
-- **Stamina:** attacks, dodges, jumps and spells consume it. Normal guard hits drain it. Regeneration is 18/sec normally and 8/sec while guarding. Perfect defence consumes none.
+- **Bows, crossbows, slingshots:** server-simulated speed, gravity, travel time and swept collisions. Shields absorb some projectile damage. Facing an arrow with a timed blade parry or active weapon swing can reflect it toward its launch position. Ownership changes: subsequent damage and kill rewards belong to the defender. At most two reflections per projectile prevent endless ping-pong.
+- **Stamina:** attacks, dodges, jumps, ropes and spells consume it. Blocking and absorbed guard hits consume none. Regeneration is 18/sec normally and 8/sec while guarding.
+- **Balance and falling:** hits reduce balance by up to 45; leg hits reduce it faster. Balance regenerates at 12/sec. When it reaches zero, it resets to 35 and a random check may knock the fighter down for 1.25 seconds. Base chance is 75%, multiplied by 0.4 per footing upgrade, with a 3% floor. Fallen fighters cannot attack, block, walk or change weapons until recovering. Lasso has a separate 70% base trip chance, reduced by the same upgrades.
+- **Ropes:** grappling rope pulls you toward a fighter or an aimed world landmark; lasso pulls the opponent toward you. Their reach is 14/9 metres, stamina cost 18, and attachment duration 1.6 seconds. They deal no direct damage, grant no XP by themselves and remain in their world.
 - **Magic:** Stormblade drains additional enemy stamina and delays recovery; Frost Sabre/Frostbolt slow real movement; fire weapons/Firebolt apply short burning damage. Healing, a temporary ward and a short shockwave are purchasable spells. Casting has server-controlled stamina costs and cooldowns. Players must buy and equip spells before use.
 
 ## Store
 
-There are **39 visible items** across melee, ranged, armour/shields/helmets, arcane weapons/spells, and health. Prices and stats come from the server catalog. Arcane weapons cost 12,000–45,000 crowns and spells cost 8,000–32,000.
+There are **46 visible items** across melee, ranged, armour/shields/helmets, arcane weapons/spells, and upgrades. Added katana, falchion, estoc, warhammer, grappling rope and lasso. Prices and stats come from the server catalog. Arcane weapons cost 12,000–45,000 crowns and spells cost 8,000–32,000. Five persistent quick-slots hold purchased weapons; keys 1–5 switch them. Borrowed weapons cannot be assigned as owned equipment.
 
 Each permanent upgrade adds **20 maximum health** and costs **12,000 × (existing upgrades + 1)²** crowns: 12,000, 48,000, then 108,000. It persists on respawn and adds only the new 20 health immediately to a living fighter. It is not a cheap full heal. Upgrades do not grant XP or skill. Crowns are game currency; purchases never use real money. Combat rewards cannot undo money spent in the store.
+
+Permanent footing costs **16,000 × (existing footing upgrades + 1)²** crowns: 16,000, 64,000, then 144,000. Each purchase cuts the current knockdown probability by 60%, until the 3% minimum is reached. It persists on respawn and server restart.
 
 ## חשבון הניקוד בקצרה
 

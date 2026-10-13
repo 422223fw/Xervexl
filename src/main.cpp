@@ -6,21 +6,25 @@
 #include <filesystem>
 #include <iomanip>
 
-enum class Screen {Home,Auth,Shop,Settings,Help,Leaders};
+enum class Screen {Home,Auth,Shop,Settings,Help,Leaders,Inventory,Worlds};
 struct App {
     HWND window{};int width=1280,height=800;bool running=true,clicked=false,locked=false,vulkan=false;
     float mouseX=0,mouseY=0,yaw=0,pitch=.28f,time=0;int attackMode=0;
+    float cameraDistance=5.2f,cameraTarget=5.2f,mouseDX=0,mouseDY=0;std::string guardDir="centre";int inventoryPage=0,inventorySlot=0;
     bool arena=false,pendingPlay=false,wasDead=false;Screen screen=Screen::Home;
     int authMode=0,focus=-1;std::string fields[5]={"", "", "", "", "http://127.0.0.1:8765"};
     std::string localMessage;float messageUntil=0,damageUntil=0,lastEventTime=-1;
     Network net;Canvas canvas;std::unique_ptr<Renderer> renderer;
     std::map<std::string,Vec> positions;
-    json world,profile,catalog,boards;std::string player,status,error,notice;bool connected=false,busy=false;
+    json world,profile,catalog,boards,worlds;std::string player,status,error,notice;bool connected=false,busy=false;
     float hp=100,maxHp=100,stamina=100,death=0,spawnSafe=0,spellCd=0;int kills=0,coins=100,level=1,skill=0,xp=0;
     int shopCategory=0,shopPage=0,leaderTab=0,seenEvent=0;float lastBoards=-10;std::string aimZone="body",heldWeapon="knife",heldSpell;
     bool automatic=true,switchSmoke=false;int switchStep=0;std::vector<std::string> seenApis;
     bool smoke=false,smokeArena=false;std::string screenshot;
     bool captureNext=false,authSubmitted=false;std::string alignedPlayer;
+    bool signed_in(){return !profile.empty()&&!profile.value("guest",true);}
+    void switch_slot(int slot){if(!profile.empty())net.queue("/inventory/switch",{{"slot",slot}});}
+    void choose_room(int id=-1){bool guest;{std::lock_guard<std::mutex> guard(net.mutex);guest=net.token.empty();}if(guest)net.queue("/auth/guest");net.queue("/arena/world",id<0?json::object():json{{"world_id",id}});pendingPlay=true;screen=Screen::Home;}
 
     bool hover(float x,float y,float w,float h){return mouseX>=x&&mouseX<=x+w&&mouseY>=y&&mouseY<=y+h;}
     bool button(float x,float y,float w,float h,const std::string& label,bool primary=false){
@@ -52,7 +56,7 @@ struct App {
     }
     void leaders(){bool guest;{std::lock_guard<std::mutex> guard(net.mutex);guest=net.token.empty();}if(guest)net.queue("/auth/guest");net.queue("/leaderboards");lastBoards=time;screen=Screen::Leaders;}
     void snapshot(){
-        std::lock_guard<std::mutex> guard(net.mutex);world=net.world;profile=net.profile;catalog=net.catalog;boards=net.boards;player=net.player;connected=net.connected;busy=net.busy;error=net.error;notice=net.message;net.message.clear();
+        std::lock_guard<std::mutex> guard(net.mutex);world=net.world;profile=net.profile;catalog=net.catalog;boards=net.boards;worlds=net.worlds;player=net.player;connected=net.connected;busy=net.busy;error=net.error;notice=net.message;net.message.clear();
     }
     void update(float dt){
         time+=dt;snapshot();
@@ -63,7 +67,9 @@ struct App {
             else if(authed&&error.empty())net.queue("/arena/join");
             else if(!error.empty())pendingPlay=false;
         }
-        if(screen==Screen::Auth&&authSubmitted&&!profile.empty()&&authMode<2&&!busy&&error.empty()){screen=Screen::Home;focus=-1;fields[1].clear();authSubmitted=false;toast("Signed in. Your equipment is saved on this server.");}
+        if(screen==Screen::Auth&&authSubmitted&&signed_in()&&authMode<2&&!busy&&error.empty()){screen=Screen::Home;focus=-1;fields[1].clear();authSubmitted=false;toast("Hello, "+profile.value("username",std::string("FIGHTER"))+"! Your equipment and progress are ready.");}
+        if(arena&&player.empty()&&!pendingPlay)arena=false;
+        cameraDistance+=(cameraTarget-cameraDistance)*std::min(1.f,dt*12);
         if(!profile.empty()){coins=profile.value("coins",100);kills=profile.value("kills",0);level=profile.value("level",1);skill=profile.value("skill",0);xp=profile.value("xp",0);maxHp=profile.value("max_hp",100.f);}
         if(screen==Screen::Leaders&&time-lastBoards>2&&!busy){net.queue("/leaderboards");lastBoards=time;}
         if(switchSmoke&&time>1.1f*(switchStep+1)&&switchStep<3){engine(!vulkan);switchStep++;}
@@ -90,6 +96,7 @@ struct App {
             if(kind=="disarm"&&e.value("source",std::string{})==player)toast("DISARM / XP + SKILL EARNED");
             if(kind=="disarm"&&e.value("target",std::string{})==player)toast("WEAPON LOST / SKILL LOST / F TO RECOVER YOUR BLADE");
             if(kind=="level"&&e.value("target",std::string{})==player)toast("LEVEL UP! RANK "+std::to_string(e.value("level",1)));
+            if(kind=="fall"&&e.value("target",std::string{})==player)toast("KNOCKED DOWN / RECOVERING FOOTING");
         }
         bool foreground=GetForegroundWindow()==window;
         bool capture=arena&&screen==Screen::Home&&foreground&&death<=0;
@@ -97,32 +104,39 @@ struct App {
         if(!capture&&locked){ClipCursor(nullptr);ShowCursor(TRUE);locked=false;}
         if(capture){
             POINT centre{width/2,height/2};ClientToScreen(window,&centre);POINT p;GetCursorPos(&p);
-            if(!smoke){yaw+=(p.x-centre.x)*.0035f;pitch=std::clamp(pitch+(p.y-centre.y)*.002f,-.15f,.72f);SetCursorPos(centre.x,centre.y);}
+            if(!smoke){mouseDX=static_cast<float>(p.x-centre.x);mouseDY=static_cast<float>(p.y-centre.y);yaw+=mouseDX*.0035f;pitch=std::clamp(pitch+mouseDY*.002f,-.85f,1.0f);SetCursorPos(centre.x,centre.y);}
             RECT clip{};GetClientRect(window,&clip);POINT a{clip.left,clip.top},b{clip.right,clip.bottom};ClientToScreen(window,&a);ClientToScreen(window,&b);clip={a.x,a.y,b.x,b.y};ClipCursor(&clip);
         }
         auto key=[&](int k){return capture&&(GetAsyncKeyState(k)&0x8000);};
-        for(int i=0;i<4;i++)if(key('1'+i))attackMode=i;
         if(key('Z'))aimZone="legs";if(key('X'))aimZone="body";if(key('C'))aimZone="head";
         float forward=static_cast<float>(key('W'))-static_cast<float>(key('S'));
         float side=static_cast<float>(key('D'))-static_cast<float>(key('A'));
         std::string attacks[]={"left","right","overhead","thrust"};
+        if(side<-.1f)attackMode=0;else if(side>.1f)attackMode=1;else if(forward>.1f)attackMode=2;else if(forward<-.1f)attackMode=3;
+        else if(std::abs(mouseDX)>3||std::abs(mouseDY)>3)attackMode=std::abs(mouseDX)>std::abs(mouseDY)?(mouseDX<0?0:1):(mouseDY<0?2:3);
+        guardDir=side<-.1f?"left":side>.1f?"right":forward>.1f?"up":forward<-.1f?"centre":guardDir;
+        if(key(VK_RBUTTON)&&forward==0&&side==0&&(std::abs(mouseDX)>3||std::abs(mouseDY)>3))guardDir=std::abs(mouseDX)>std::abs(mouseDY)?(mouseDX<0?"left":"right"):(mouseDY<0?"up":"centre");
         json input={{"move",{std::sin(yaw)*forward+std::cos(yaw)*side,std::cos(yaw)*forward-std::sin(yaw)*side}},
                     {"yaw",yaw},{"attack",key('Q')?std::string("disarm"):key(VK_LBUTTON)?attacks[attackMode]:std::string{}},{"block",key(VK_RBUTTON)},
                     {"dodge",key(VK_SHIFT)},{"jump",key(VK_SPACE)},{"drop",key('G')},{"pickup",key('F')},{"cast",key('B')},
-                    {"aim_zone",aimZone},{"aim_pitch",pitch-.28f}};
+                    {"aim_zone",aimZone},{"aim_pitch",pitch-.28f},{"guard_dir",guardDir}};
         if(smokeArena){input["move"]={0,0};input["attack"]="";}
         {std::lock_guard<std::mutex> guard(net.mutex);net.input=input;}
     }
     void world_view(){
         if(arena&&!player.empty()&&positions.count(player)){
-            Vec p=positions[player];canvas.set_camera(p+Vec{-std::sin(yaw)*5.2f,2.7f+pitch*4,-std::cos(yaw)*5.2f},p+Vec{std::sin(yaw)*2,1.25f,std::cos(yaw)*2});
+            Vec p=positions[player];
+            if(world.contains("fighters"))for(const auto& f:world["fighters"])if(f.value("id",std::string{})==player){float jump=f.value("jump",0.f);if(jump>0)p.y+=std::sin((.55f-jump)/.55f*PI)*.65f;float fall=f.value("fall",0.f);if(fall>0)p.y-=std::min(1.f,fall*4)*.95f;break;}
+            if(cameraDistance<.45f){Vec eye=p+Vec{0,1.84f,0};canvas.set_camera(eye,eye+Vec{std::sin(yaw)*std::cos(pitch)*6,-std::sin(pitch)*6,std::cos(yaw)*std::cos(pitch)*6});}
+            else {float blend=std::clamp((cameraDistance-.45f)/2.f,0.f,1.f),d=std::max(0.f,cameraDistance-.45f);Vec eye=p+Vec{-std::sin(yaw)*d,1.84f+d*.63f+pitch*2*blend,-std::cos(yaw)*d};Vec nearLook=eye+Vec{std::sin(yaw)*std::cos(pitch)*6,-std::sin(pitch)*6,std::cos(yaw)*std::cos(pitch)*6},farLook=p+Vec{std::sin(yaw)*1.2f,1.25f,std::cos(yaw)*1.2f};canvas.set_camera(eye,nearLook*(1-blend)+farLook*blend);}
         }else{
             float a=.52f+std::sin(time*.025f)*.2f;canvas.set_camera({std::sin(a)*9+4,3.0f,std::cos(a)*9},{5.5f,1.15f,0});
         }
-        environment(canvas,time);
+        environment(canvas,time,world.value("world",json::object()));
         battlefield_objects(canvas,world,time);
         if(world.contains("fighters")){
-            for(auto f:world["fighters"]){std::string id=f.value("id",std::string{});if(positions.count(id)){f["x"]=positions[id].x;f["z"]=positions[id].z;}fighter(canvas,f,time,id==player);}
+            for(auto f:world["fighters"]){std::string id=f.value("id",std::string{});if(positions.count(id)){f["x"]=positions[id].x;f["z"]=positions[id].z;}
+                if(id==player&&arena&&cameraDistance<.45f)first_person_arms(canvas,f,yaw,pitch,world.value("time",time));else fighter(canvas,f,world.value("time",time),id==player);}
         }else{
             // Clearly visual menu scene, not a fabricated online population.
             json a={{"id","menu-a"},{"x",2.7},{"z",2.0},{"yaw",-1.2},{"weapon","longsword"},{"armour","mail"},{"shield","buckler"}};
@@ -150,7 +164,7 @@ struct App {
         if(button(640,20,176,43,"LEADERBOARDS"))leaders();
         if(button(830,20,140,43,"ARMOURY"))screen=Screen::Shop;
         if(button(983,20,110,43,"SETTINGS"))screen=Screen::Settings;
-        if(button(1106,20,140,43,profile.empty()?"SIGN IN":"ACCOUNT")){screen=Screen::Auth;authMode=0;focus=0;}
+        if(button(1106,20,140,43,signed_in()?"LOGOUT":"SIGN IN")){if(signed_in()){pendingPlay=false;arena=false;net.queue("/auth/logout");fields[1].clear();}else{screen=Screen::Auth;authMode=0;focus=0;}}
         canvas.text(57,157,"STEEL. SAND. SURVIVAL.",1.9f,GOLD);
         canvas.text(52,215,"XERVEXL",8.2f,WHITE);
         canvas.rect(57,299,88,3,GOLD);
@@ -158,14 +172,15 @@ struct App {
         canvas.text(57,380,"An open arena of blades and nerve.\nRead your opponent. Choose your strike.\nFall, return, and fight again.",1.75f,MUTED);
         if(button(57,483,343,70,busy?"CONNECTING...":(!player.empty()?"RETURN TO ARENA":"ENTER THE ARENA"),true))play();
         if(button(414,483,142,70,"HOW TO PLAY"))screen=Screen::Help;
-        canvas.text(57,585,profile.empty()?"PLAY AS GUEST OR SIGN IN TO SAVE YOUR GEAR":("WELCOME, "+profile.value("username",std::string("FIGHTER"))),1.4f,MUTED);
+        canvas.text(57,585,signed_in()?("HELLO, "+profile.value("username",std::string("FIGHTER"))):"PLAY AS GUEST OR SIGN IN TO SAVE YOUR GEAR",1.6f,signed_in()?GOLD:MUTED);
         canvas.rect(57,631,490,96,{.07f,.10f,.11f,.93f});canvas.border(57,631,490,96,{.19f,.25f,.25f});canvas.rect(57,631,3,96,GOLD);
         canvas.text(77,651,"A BLADE IS ALL YOU NEED",1.7f,GOLD);canvas.text(77,680,"Earn XP, skill and crowns. Build your arsenal.\nBlades, bows, armour and rare arcane weapons.",1.45f,WHITE);
-        canvas.rect(930,600,294,125,{.04f,.065f,.067f,.89f});canvas.text(951,620,"THE SAND NEVER EMPTIES",1.5f,GOLD);
-        canvas.text(951,652,"10 FIGHTERS MINIMUM\nAI DEPTH 2 / 3 / 4 / 5\nONLINE SERVER OR LOCAL BOTS",1.25f,WHITE);
+        canvas.rect(930,600,294,125,{.04f,.065f,.067f,.89f});canvas.text(951,619,"FIVE LIVING WORLDS",1.5f,GOLD);
+        canvas.text(951,650,world.value("world",json::object()).value("name",std::string("CHOOSE YOUR NEXT ARENA")),1.45f,WHITE);
+        if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.2",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.3",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});
@@ -213,9 +228,9 @@ struct App {
     }
     void help(){
         panel("READ THE BLADE","AIM, PARRY, DISARM. EARN XP AND BUILD YOUR ARSENAL.");
-        std::vector<std::pair<std::string,std::string>> rows={{"W A S D / MOUSE","MOVE / LOOK"},{"LEFT CLICK / 1-4","ATTACK / CHOOSE SWORD MOVE"},{"RIGHT CLICK","BLOCK / TIMED PARRY: NO STAMINA"},{"Z / X / C","AIM AT LEGS / BODY / HEAD"},{"Q","DISARM A TIRED OR RECOVERING ENEMY"},{"G / F","DROP WEAPON / PICK UP NEARBY WEAPON"},{"SHIFT / SPACE","DODGE / SMALL JUMP"},{"B","CAST YOUR PURCHASED SPELL"},{"E / T / ESC","ARMOURY / LEADERBOARDS / MENU"}};
+        std::vector<std::pair<std::string,std::string>> rows={{"W A S D / MOUSE","MOVE / LOOK / DIRECTIONAL COMBAT"},{"LEFT CLICK / RMB","ATTACK / BLOCK AND CANCEL ATTACK"},{"W / S / A / D","OVERHEAD / THRUST / LEFT / RIGHT CUT"},{"1 - 5 / I","CHANGE WEAPON / OWNED INVENTORY"},{"MOUSE WHEEL","OVERHEAD VIEW THROUGH FIRST PERSON"},{"Z X C / Q","AIM LEGS BODY HEAD / DISARM"},{"G F / SHIFT SPACE","DROP PICKUP / DODGE JUMP"},{"B","CAST PURCHASED SPELL"},{"E / T / ESC","ARMOURY / SCORES / MENU"}};
         float y=218;for(auto& row:rows){canvas.text(315,y,row.first,1.5f,GOLD);canvas.text(540,y,row.second,1.3f,WHITE);canvas.rect(315,y+23,650,1,{.17f,.23f,.22f});y+=39;}
-        canvas.text(315,605,"A timed blade parry or swing can deflect arrows.\nDifferent hit regions deal different damage.\nDeath costs skill. There is no final round.",1.4f,MUTED);
+        canvas.text(315,605,"Face the incoming blade and match guard direction.\nTimed defence knocks its weapon away without stamina.\nFace an arrow and block at impact to return it.",1.4f,MUTED);
     }
     void hud(){
         canvas.rect(22,20,440,67,{.035f,.055f,.058f,.89f});emblem(53,52,33);canvas.text(80,34,"XERVEXL",2.2f,GOLD);
@@ -228,10 +243,10 @@ struct App {
         canvas.text(47,701,"HEALTH",1.1f,MUTED);canvas.rect(132,700,239,12,{.16f,.20f,.18f});canvas.rect(132,700,239*hp/maxHp,12,{.62f,.26f,.19f});canvas.text(263,672,std::to_string(static_cast<int>(hp))+" / "+std::to_string(static_cast<int>(maxHp)),1.2f,MUTED);
         canvas.text(47,728,"STAMINA",1.1f,MUTED);canvas.rect(132,727,239,9,{.16f,.20f,.18f});canvas.rect(132,727,239*stamina/100,9,GOLD);
         canvas.text(47,752,std::to_string(kills)+" ELIMINATIONS / "+std::to_string(coins)+" CROWNS",1.15f,MUTED);
-        std::string moves[]={"LEFT CUT","RIGHT CUT","OVERHEAD","THRUST"};
-        for(int i=0;i<4;i++){float x=450+i*149;canvas.rect(x,714,141,54,i==attackMode?Colour{.38f,.28f,.16f,.94f}:Colour{.04f,.07f,.075f,.90f});canvas.border(x,714,141,54,i==attackMode?GOLD:Colour{.20f,.27f,.25f});canvas.text(x+13,727,std::to_string(i+1),1.5f,GOLD);canvas.text(x+12,750,moves[i],1.05f,WHITE);}
+        json slots=profile.value("weapon_slots",json::array({"knife","","","",""}));
+        for(int i=0;i<5;i++){float x=450+i*119;std::string id=i<static_cast<int>(slots.size())?slots[i].get<std::string>():"";bool active=id==heldWeapon&&!id.empty();canvas.rect(x,714,112,54,active?Colour{.38f,.28f,.16f,.94f}:Colour{.04f,.07f,.075f,.90f});canvas.border(x,714,112,54,active?GOLD:Colour{.20f,.27f,.25f});canvas.text(x+10,723,std::to_string(i+1),1.4f,GOLD);canvas.text(x+10,748,id.empty()?"EMPTY":id.substr(0,13),1.05f,WHITE);}
         auto info=item_info(heldWeapon);std::string weaponLabel=heldWeapon=="fists"?"BARE HANDS / F: RECOVER":info.value("name",heldWeapon);canvas.text(450,648,weaponLabel+" / AIM: "+aimZone+" [Z X C]",1.3f,GOLD);
-        canvas.text(450,677,"Q DISARM  F PICKUP  G DROP  RMB PARRY",1.2f,MUTED);canvas.text(1100,709,"E ARMOURY\nT SCORES\nESC MENU",1.2f,MUTED);
+        const char* moveNames[]={"LEFT CUT","RIGHT CUT","OVERHEAD","THRUST"};canvas.text(450,677,std::string("MOVE: ")+moveNames[attackMode]+" / GUARD: "+guardDir+" / I INVENTORY",1.2f,MUTED);canvas.text(1100,709,"E ARMOURY\nT SCORES\nESC MENU",1.2f,MUTED);
         if(!heldSpell.empty())canvas.text(450,622,"B: "+heldSpell+(spellCd>0?" / "+std::to_string(static_cast<int>(std::ceil(spellCd)))+"S":" / READY"),1.3f,{.46f,.74f,.92f});
         float start=profile.value("level_start_xp",0.f),next=profile.value("next_level_xp",150.f);canvas.rect(450,781,589,5,{.16f,.20f,.18f});canvas.rect(450,781,589*std::clamp((xp-start)/std::max(1.f,next-start),0.f,1.f),5,GOLD);
         if(world.contains("events")){float y=106;for(auto& e:world["events"])if(e.value("kind",std::string{})=="kill"&&world.value("time",0.f)-e.value("time",0.f)<8){std::string label=e.value("source",std::string{})+"  /  "+e.value("target",std::string{});canvas.rect(961,y-7,296,26,{.04f,.06f,.06f,.72f});canvas.text(974,y,label,1.2f,MUTED);y+=32;}}
@@ -241,7 +256,7 @@ struct App {
     void frame(){
         canvas.begin(width,height);world_view();
         if(arena&&screen==Screen::Home)hud();else{
-            if(screen==Screen::Home)home();else if(screen==Screen::Auth)auth();else if(screen==Screen::Shop)shop();else if(screen==Screen::Settings)settings();else if(screen==Screen::Leaders)leaderboard_view();else help();
+            if(screen==Screen::Home)home();else if(screen==Screen::Auth)auth();else if(screen==Screen::Shop)shop();else if(screen==Screen::Settings)settings();else if(screen==Screen::Leaders)leaderboard_view();else if(screen==Screen::Inventory)inventory_view();else if(screen==Screen::Worlds)worlds_view();else help();
         }
         std::string value=!error.empty()?error:time<messageUntil?localMessage:std::string{};
         if(!value.empty()){
@@ -268,10 +283,13 @@ LRESULT CALLBACK window_proc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
         case WM_SIZE:app->width=std::max(1,static_cast<int>(LOWORD(lp)));app->height=std::max(1,static_cast<int>(HIWORD(lp)));return 0;
         case WM_MOUSEMOVE:app->mouseX=GET_X_LPARAM(lp)*1280.f/app->width;app->mouseY=GET_Y_LPARAM(lp)*800.f/app->height;return 0;
         case WM_LBUTTONDOWN:app->clicked=true;return 0;
+        case WM_MOUSEWHEEL:if(app->arena&&app->screen==Screen::Home)app->cameraTarget=std::clamp(app->cameraTarget-GET_WHEEL_DELTA_WPARAM(wp)/120.f*.9f,0.f,14.f);return 0;
         case WM_KEYDOWN:
             if(wp==VK_ESCAPE&&!(lp&(1<<30))){if(app->screen!=Screen::Home){app->screen=Screen::Home;app->focus=-1;}else app->arena=!app->arena&& !app->player.empty();}
             if(wp=='E'&&app->arena&&!(lp&(1<<30)))app->screen=app->screen==Screen::Shop?Screen::Home:Screen::Shop;
             if(wp=='T'&&app->focus<0&&app->screen!=Screen::Auth&&app->screen!=Screen::Settings&&!(lp&(1<<30)))app->leaders();
+            if(wp=='I'&&app->focus<0&&app->screen!=Screen::Auth&&app->screen!=Screen::Settings&&!(lp&(1<<30)))app->screen=app->screen==Screen::Inventory?Screen::Home:Screen::Inventory;
+            if(wp>='1'&&wp<='5'&&app->arena&&app->screen==Screen::Home&&!(lp&(1<<30)))app->switch_slot(static_cast<int>(wp-'1'));
             if(wp==VK_TAB&&app->screen==Screen::Auth){app->focus=(app->focus+1)%(app->authMode==1?3:2);}
             if(wp==VK_F12){std::filesystem::create_directories("screenshots");app->captureNext=true;app->screenshot="screenshots/capture.bmp";app->toast("Screenshot saved in screenshots/capture.bmp");}
             return 0;
@@ -292,14 +310,19 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
         if(args.find("--defence")!=std::string::npos)state.shopCategory=2;
         if(args.find("--arcane")!=std::string::npos)state.shopCategory=3;
         if(args.find("--health")!=std::string::npos)state.shopCategory=4;
+        if(args.find("--inventory")!=std::string::npos)state.screen=Screen::Inventory;
+        if(args.find("--worlds")!=std::string::npos)state.screen=Screen::Worlds;
+        if(args.find("--first-person")!=std::string::npos)state.cameraDistance=state.cameraTarget=0;
+        if(args.find("--overhead")!=std::string::npos)state.cameraDistance=state.cameraTarget=14;
         if(auto pos=args.find("--server=");pos!=std::string::npos){size_t start=pos+9,end=args.find(' ',start);state.fields[4]=args.substr(start,end==std::string::npos?end:end-start);state.net.server(state.fields[4]);}
         WNDCLASSW wc{};wc.style=CS_OWNDC;wc.lpfnWndProc=window_proc;wc.hInstance=instance;wc.lpszClassName=L"XervexlArenaWindow";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassW(&wc);
         RECT size{0,0,1280,800};AdjustWindowRect(&size,WS_OVERLAPPEDWINDOW,FALSE);
         state.window=CreateWindowW(wc.lpszClassName,L"Xervexl | motlon",WS_OVERLAPPEDWINDOW|WS_VISIBLE,CW_USEDEFAULT,CW_USEDEFAULT,size.right-size.left,size.bottom-size.top,nullptr,nullptr,instance,nullptr);
         if(!state.window)throw std::runtime_error("Cannot create game window");
+        SetWindowTextA(state.window,"Xervexl | motlon");ShowWindow(state.window,SW_SHOWNORMAL);UpdateWindow(state.window);
         state.engine(state.vulkan,args.find("--opengl")==std::string::npos&&args.find("--vulkan")==std::string::npos);state.net.queue("/health");
         if(args.find("--leaders")!=std::string::npos)state.leaders();
-        if(state.smokeArena)state.play();
+        if(auto pos=args.find("--world=");pos!=std::string::npos)state.choose_room(std::stoi(args.substr(pos+8)));else if(state.smokeArena)state.play();
         auto previous=std::chrono::steady_clock::now();int frameCount=0;double fpsTotal=0;
         while(state.running){
             MSG message;while(PeekMessage(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessage(&message);}
@@ -307,10 +330,11 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
             auto now=std::chrono::steady_clock::now();float dt=std::chrono::duration<float>(now-previous).count();previous=now;
             state.update(std::min(dt,.1f));if(state.smoke&&fpsTotal+dt>4)state.captureNext=true;state.frame();frameCount++;fpsTotal+=dt;
             if(state.smoke&&fpsTotal>4){
-                std::filesystem::create_directories("screenshots");std::string tag=state.switchSmoke?"combined":state.vulkan?"vulkan":"opengl";if(state.smokeArena)tag+="-arena";else if(state.screen==Screen::Shop)tag+="-shop";else if(state.screen==Screen::Leaders)tag+="-leaders";else tag+="-home";
+                std::filesystem::create_directories("screenshots");std::string tag=state.switchSmoke?"combined":state.vulkan?"vulkan":"opengl";if(state.smokeArena)tag+=state.cameraTarget<.45f?"-first-person":state.cameraTarget>12?"-overhead":"-arena";else if(state.screen==Screen::Shop)tag+="-shop";else if(state.screen==Screen::Leaders)tag+="-leaders";else if(state.screen==Screen::Inventory)tag+="-inventory";else if(state.screen==Screen::Worlds)tag+="-worlds";else tag+="-home";
                 state.capture("screenshots/"+tag+".bmp");
                 json report={{"renderer",state.renderer->name()},{"frames",frameCount},{"seconds",fpsTotal},{"vertices",state.canvas.mesh.size()},{"connected",state.connected},{"player",state.player},{"fighters",state.world.value("fighters",json::array()).size()},{"humans",state.world.value("humans",0)},{"bots",state.world.value("bots",0)},{"error",state.error}};
                 report["graphics_engines_used"]=state.seenApis;report["catalog_items"]=state.catalog.size();report["rank"]=state.level;report["skill"]=state.skill;report["xp"]=state.xp;
+                report["camera_distance"]=state.cameraDistance;report["world"]=state.world.value("world",json::object()).value("name",std::string{});report["signed_in"]=state.signed_in();report["weapon_slots"]=state.profile.value("weapon_slots",json::array());
                 std::ofstream("screenshots/"+tag+".json")<<report.dump(2);Sleep(500);break;
             }
             auto used=std::chrono::steady_clock::now()-now;if(used<std::chrono::milliseconds(16))std::this_thread::sleep_for(std::chrono::milliseconds(16)-used);

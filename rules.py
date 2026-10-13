@@ -1,7 +1,7 @@
 """Shared authoritative progression, equipment and damage rules for Xervexl."""
 import math
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 WEAPONS = [
     dict(id="fists",name="Bare hands",price=0,damage=5,reach=1.05,cooldown=.48,family="unarmed",hidden=True),
@@ -49,12 +49,21 @@ SPELLS = [
     dict(id="ward",name="Ward spell",price=24000,kind="spell",absorb=25,cooldown=8.,cost=28),
     dict(id="shock",name="Shockwave spell",price=32000,kind="spell",damage=28,reach=4.5,cooldown=8.,cost=35),
 ]
+WEAPONS += [
+    dict(id="katana",name="Steel katana",price=2100,damage=29,reach=2.85,cooldown=.44,family="blade"),
+    dict(id="falchion",name="Heavy falchion",price=1700,damage=35,reach=2.6,cooldown=.61,family="blade"),
+    dict(id="estoc",name="Piercing estoc",price=3200,damage=30,reach=3.1,cooldown=.60,family="blade",armour_pierce=.3),
+    dict(id="warhammer",name="War hammer",price=3500,damage=42,reach=2.1,cooldown=.95,family="mace",armour_pierce=.5),
+    dict(id="grappling_rope",name="Grappling rope",price=2300,damage=0,reach=14,cooldown=2.3,family="rope"),
+    dict(id="lasso",name="Combat lasso",price=4000,damage=0,reach=9,cooldown=2.,family="rope"),
+]
+GEAR += [dict(id="stability",name="Permanent footing",price=16000,kind="upgrade",repeatable=True)]
 ITEMS = {i["id"]:i for i in WEAPONS+GEAR+SPELLS}
 CATALOG = [i for i in WEAPONS+GEAR+SPELLS if not i.get("hidden")]
 RANGED = {"bow","crossbow","slingshot","staff"}
 TARGET_HEIGHTS = {"head":1.86,"body":1.25,"legs":.55}
 BODY_MULTIPLIERS = {"head":1.45,"body":1.,"arms":.82,"legs":.68}
-PERSISTENT = ("xp","skill","coins","kills","deaths","parries","disarms","health_upgrades")
+PERSISTENT = ("xp","skill","coins","kills","deaths","parries","disarms","health_upgrades","stability_upgrades")
 
 
 def xp_for_level(level):
@@ -69,10 +78,19 @@ def health_price(upgrades):
     return 12000*(1+upgrades)**2
 
 
+def stability_price(upgrades):return 16000*(1+upgrades)**2
+
+
 def complete_account(user):
     """Add fields without replacing the user's existing equipment or progress."""
     for key,value in dict(xp=0,skill=0,parries=0,disarms=0,health_upgrades=0,helmet="",spell="").items():
         user.setdefault(key,value)
+    user.setdefault("stability_upgrades",0)
+    if "weapon_slots" not in user:
+        equipped=user.get("weapon","knife")
+        owned=[x for x in user.get("inventory",["knife"]) if x in ITEMS and ITEMS[x].get("kind","weapon")=="weapon" and not ITEMS[x].get("hidden")]
+        slots=([equipped] if equipped in owned else [])+[x for x in owned if x!=equipped]
+        user["weapon_slots"]=(slots[:5]+[""]*5)[:5]
     return user
 
 

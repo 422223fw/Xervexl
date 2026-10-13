@@ -52,8 +52,9 @@ class ProgressionTests(unittest.TestCase):
         self.arena.strike(self.a)
         self.assertEqual(self.b["stamina"],0)
         self.assertEqual(self.b["hp"],100)
-        self.assertEqual(self.b["xp"],45)
-        self.assertEqual(self.b["skill"],2)
+        self.assertEqual(self.b["xp"],130)
+        self.assertEqual(self.b["skill"],5)
+        self.assertEqual(self.a["weapon"],"fists")
         self.assertEqual(self.b["parries"],1)
 
     def test_disarm_earns_progress_loses_victim_skill_and_spawns_weapon(self):

@@ -6,18 +6,20 @@
         if(kind=="shield"){canvas.circle(x,y,23*scale,{.34f,.38f,.37f});canvas.circle(x,y,17*scale,{.18f,.24f,.22f});canvas.circle(x,y,7*scale,GOLD);}
         else if(kind=="armour"){canvas.rect(x-18*scale,y-24*scale,36*scale,48*scale,{.46f,.50f,.47f});canvas.triangle(x-18*scale,y-24*scale,x,y-35*scale,x+18*scale,y-24*scale,{.59f,.62f,.57f});canvas.rect(x-20*scale,y+14*scale,40*scale,5*scale,GOLD);}
         else if(kind=="helmet"){canvas.circle(x,y,24*scale,metal);canvas.rect(x-25*scale,y,50*scale,20*scale,INK);canvas.line(x-19*scale,y+2*scale,x+19*scale,y+2*scale,5*scale,metal);canvas.line(x,y-10*scale,x,y+16*scale,6*scale,metal);}
-        else if(kind=="upgrade"){canvas.circle(x,y,29*scale,{.52f,.15f,.13f});canvas.rect(x-5*scale,y-17*scale,10*scale,34*scale,WHITE);canvas.rect(x-17*scale,y-5*scale,34*scale,10*scale,WHITE);}
+        else if(kind=="upgrade"){canvas.circle(x,y,29*scale,id=="stability"?Colour{.24f,.47f,.35f}:Colour{.52f,.15f,.13f});canvas.rect(x-5*scale,y-17*scale,10*scale,34*scale,WHITE);canvas.rect(x-17*scale,y-5*scale,34*scale,10*scale,WHITE);}
         else if(kind=="spell"){canvas.circle(x,y,25*scale,{.20f,.43f,.61f});canvas.circle(x,y,17*scale,{.10f,.23f,.35f});canvas.line(x-10*scale,y+8*scale,x+2*scale,y-15*scale,4*scale,GOLD);canvas.line(x+2*scale,y-15*scale,x+11*scale,y+13*scale,4*scale,GOLD);}
         else if(family=="bow"){for(int i=0;i<12;i++){float a=-1.15f+i*2.3f/12,b=-1.15f+(i+1)*2.3f/12;canvas.line(x+std::cos(a)*28*scale-13*scale,y+std::sin(a)*45*scale,x+std::cos(b)*28*scale-13*scale,y+std::sin(b)*45*scale,4*scale,GOLD);}canvas.line(x,y-41*scale,x,y+41*scale,1*scale,WHITE);canvas.line(x-20*scale,y,x+42*scale,y,2*scale,metal);canvas.triangle(x+42*scale,y,x+32*scale,y-5*scale,x+32*scale,y+5*scale,metal);}
         else if(family=="crossbow"){canvas.line(x,y+38*scale,x,y-33*scale,7*scale,GOLD);canvas.line(x-34*scale,y-12*scale,x+34*scale,y-12*scale,5*scale,metal);canvas.line(x-34*scale,y-12*scale,x,y+9*scale,1*scale,WHITE);canvas.line(x+34*scale,y-12*scale,x,y+9*scale,1*scale,WHITE);}
         else if(family=="slingshot"){canvas.line(x,y+30*scale,x,y-4*scale,6*scale,GOLD);canvas.line(x,y-4*scale,x-22*scale,y-28*scale,5*scale,GOLD);canvas.line(x,y-4*scale,x+22*scale,y-28*scale,5*scale,GOLD);canvas.line(x-22*scale,y-28*scale,x,y-12*scale,2*scale,WHITE);canvas.line(x+22*scale,y-28*scale,x,y-12*scale,2*scale,WHITE);}
+        else if(family=="rope"){canvas.circle(x,y,25*scale,{.59f,.43f,.22f});canvas.circle(x,y,18*scale,INK);canvas.circle(x,y,12*scale,{.59f,.43f,.22f});canvas.circle(x,y,6*scale,INK);canvas.line(x+20*scale,y+14*scale,x+39*scale,y+36*scale,3*scale,GOLD);}
         else{float length=id=="knife"||id=="dagger"?27:family=="spear"||family=="staff"?55:48;canvas.line(x,y+26*scale,x,y-length*scale,5*scale,magic?Colour{.42f,.73f,.94f}:metal);canvas.line(x-14*scale,y+16*scale,x+14*scale,y+16*scale,4*scale,GOLD);canvas.line(x,y+18*scale,x,y+35*scale,6*scale,{.30f,.22f,.15f});if(family=="axe")canvas.triangle(x,y-43*scale,x+28*scale,y-37*scale,x+24*scale,y-15*scale,metal);else if(family=="mace")canvas.circle(x,y-33*scale,14*scale,metal);else if(family=="staff")canvas.circle(x,y-48*scale,12*scale,{.95f,.47f,.18f});else canvas.triangle(x-3*scale,y-length*scale,x+3*scale,y-length*scale,x,y-(length+8)*scale,WHITE);}
     }
     void shop(){
         canvas.rect(0,0,1280,800,{.025f,.041f,.044f,.98f});canvas.text(46,27,"THE ARMOURY",3.6f,GOLD);
-        canvas.text(47,77,"BLADES, RANGED WEAPONS, DEFENCE AND RARE ARCANE EQUIPMENT",1.45f,MUTED);
+        if(button(678,24,236,46,"INVENTORY [I]"))screen=Screen::Inventory;
+        canvas.text(47,77,"PURCHASE EQUIPMENT, ASSIGN QUICK-SLOTS, BUILD YOUR LOADOUT",1.45f,MUTED);
         canvas.text(936,38,std::to_string(coins)+" CROWNS",1.9f,GOLD);if(button(1127,24,106,46,"BACK"))screen=Screen::Home;
-        const char* categories[]={"MELEE","RANGED","ARMOUR & SHIELDS","ARCANE","HEALTH"};
+        const char* categories[]={"MELEE","RANGED","ARMOUR & SHIELDS","ARCANE","UPGRADES"};
         for(int i=0;i<5;i++)if(button(47+i*241,110,225,45,categories[i],shopCategory==i)){shopCategory=i;shopPage=0;}
         std::vector<json> items;
         for(const auto& item:catalog){std::string kind=item.value("kind",std::string("weapon")),family=item.value("family",std::string{});bool ranged=family=="bow"||family=="crossbow"||family=="slingshot"||family=="staff";bool magic=item.contains("magic")||kind=="spell";
@@ -29,7 +31,7 @@
             int index=shopPage*8+slot;if(index>=static_cast<int>(items.size()))break;auto item=items[index];std::string id=item["id"],kind=item.value("kind",std::string("weapon"));
             float x=47+(slot%4)*301,y=180+(slot/4)*252;bool upgrade=kind=="upgrade",owned=false;
             if(profile.contains("inventory"))for(auto& v:profile["inventory"])if(v==id)owned=true;
-            bool equipped=!upgrade&&profile.value(kind,std::string{})==id;int price=upgrade?profile.value("health_upgrade_price",12000):item.value("price",0);
+            bool equipped=!upgrade&&profile.value(kind,std::string{})==id;int price=upgrade?profile.value(id=="stability"?"stability_upgrade_price":"health_upgrade_price",id=="stability"?16000:12000):item.value("price",0);
             canvas.rect(x,y,285,234,{.085f,.12f,.125f});canvas.border(x,y,285,234,equipped?GOLD:Colour{.20f,.27f,.26f});
             canvas.text(x+14,y+12,equipped?"EQUIPPED":upgrade?"PERMANENT UPGRADE":owned?"OWNED":item.contains("magic")?"RARE ARCANE":"AVAILABLE",1.1f,equipped?GOLD:MUTED);
             weapon_icon(x+142,y+87,id,.76f);std::string title=item.value("name",std::string{});float titleScale=Canvas::text_width(title,1.85f)>257?1.6f:1.85f;canvas.text(x+14,y+136,title,titleScale,WHITE);
@@ -38,6 +40,7 @@
             else if(kind=="shield")detail="BLOCKS "+std::to_string(static_cast<int>(item.value("reduction",0.f)*100))+"% / NORMAL BLOCK";
             else if(kind=="armour"||kind=="helmet")detail=std::to_string(static_cast<int>(item.value("reduction",0.f)*100))+"% DEFENCE"+(kind=="helmet"?" / HEAD":" / BODY");
             else if(kind=="spell")detail=std::to_string(item.value("cost",0))+" STAMINA / "+std::to_string(static_cast<int>(item.value("cooldown",0.f)))+"S COOLDOWN / B";
+            else if(id=="stability")detail="FALL RISK: 60% LESS PER UPGRADE";
             else detail="MAX HP "+std::to_string(static_cast<int>(maxHp))+" -> "+std::to_string(static_cast<int>(maxHp)+20);
             canvas.text(x+14,y+159,detail,1.2f,MUTED);
             if(kind=="weapon")canvas.text(x+14,y+178,"RECOVERY "+std::to_string(item.value("cooldown",0.f)).substr(0,4)+"S",1.0f,MUTED);
@@ -47,7 +50,36 @@
         canvas.text(47,704,"PAGE "+std::to_string(shopPage+1)+" / "+std::to_string(pages),1.4f,MUTED);
         if(button(931,697,139,38,"PREVIOUS")&&shopPage>0)shopPage--;
         if(button(1083,697,149,38,"NEXT")&&shopPage+1<pages)shopPage++;
-        canvas.text(47,755,shopCategory==4?"HEALTH IS EXPENSIVE: 12,000 x (UPGRADES + 1) SQUARED. EACH PURCHASE ADDS 20 MAX HP.":"HEAD, BODY AND LEG HITS DIFFER. NO SINGLE HIT KILLS A FULL-HEALTH FIGHTER.",1.3f,MUTED);
+        canvas.text(47,755,shopCategory==4?"PERMANENT HEALTH AND FOOTING. LATER UPGRADES COST MORE. BLOCKING DOES NOT DRAIN STAMINA.":"NUMBERS 1-5 CHANGE QUICK-SLOT WEAPONS. MOVEMENT AND MOUSE DIRECTION CONTROL SWORD MOVES.",1.3f,MUTED);
+    }
+    void inventory_view(){
+        canvas.rect(0,0,1280,800,{.025f,.041f,.044f,.98f});canvas.text(47,29,"YOUR INVENTORY",3.5f,GOLD);
+        canvas.text(47,77,"SELECT A QUICK-SLOT, THEN ASSIGN ANY PURCHASED WEAPON. NUMBERS 1-5 SWITCH IN COMBAT.",1.4f,MUTED);
+        if(button(1127,24,106,46,"BACK"))screen=Screen::Home;
+        json slots=profile.value("weapon_slots",json::array({"knife","","","",""}));
+        for(int i=0;i<5;i++){float x=47+i*241;std::string id=i<static_cast<int>(slots.size())?slots[i].get<std::string>():"";if(button(x,110,225,48,"SLOT "+std::to_string(i+1),inventorySlot==i))inventorySlot=i;canvas.text(x+14,173,id.empty()?"EMPTY":item_info(id).value("name",id),1.45f,id==heldWeapon?GOLD:MUTED);}
+        std::vector<json> owned;for(const auto& item:catalog)if(item.value("kind",std::string("weapon"))=="weapon"&&profile.contains("inventory")){for(const auto& id:profile["inventory"])if(id==item["id"]){owned.push_back(item);break;}}
+        int pages=std::max(1,(static_cast<int>(owned.size())+7)/8);inventoryPage=std::min(inventoryPage,pages-1);
+        if(owned.empty())canvas.text(47,240,"ENTER THE ARENA OR SIGN IN. START WITH A KNIFE; PURCHASE MORE IN THE ARMOURY.",1.5f,WHITE);
+        for(int i=0;i<8;i++){int index=inventoryPage*8+i;if(index>=static_cast<int>(owned.size()))break;float x=47+(i%4)*301,y=218+(i/4)*217;std::string id=owned[index]["id"];
+            canvas.rect(x,y,285,200,{.085f,.12f,.125f});weapon_icon(x+142,y+62,id,.64f);canvas.text(x+14,y+113,owned[index].value("name",id),1.6f,WHITE);
+            if(button(x+14,y+149,257,36,"ASSIGN TO "+std::to_string(inventorySlot+1),true))net.queue("/inventory/assign",{{"slot",inventorySlot},{"item",id}});
+        }
+        canvas.text(47,698,"PAGE "+std::to_string(inventoryPage+1)+" / "+std::to_string(pages),1.4f,MUTED);
+        if(button(931,687,139,38,"PREVIOUS")&&inventoryPage>0)inventoryPage--;if(button(1083,687,149,38,"NEXT")&&inventoryPage+1<pages)inventoryPage++;
+        canvas.text(47,751,"OWNERSHIP IS SAVED. BORROWED ARENA WEAPONS ARE TEMPORARY AND CANNOT BE ASSIGNED.",1.4f,MUTED);
+    }
+    void worlds_view(){
+        canvas.rect(0,0,1280,800,{.025f,.041f,.044f,.98f});canvas.text(47,29,"CHOOSE YOUR WORLD",3.5f,GOLD);
+        canvas.text(47,77,"SHARED ARENAS, RANDOMIZED LANDMARKS, TEN COMBATANTS PER ACTIVE WORLD.",1.4f,MUTED);
+        if(button(1127,24,106,46,"BACK"))screen=Screen::Home;
+        for(size_t i=0;i<worlds.size();i++){const auto& w=worlds[i];float x=47+(i%3)*402,y=153+(i/3)*260;std::string biome=w.value("biome",std::string{});Colour tint=biome=="snow"?Colour{.66f,.77f,.82f}:biome=="forest"?Colour{.27f,.44f,.31f}:biome=="coast"?Colour{.31f,.57f,.64f}:biome=="volcanic"?Colour{.57f,.29f,.20f}:Colour{.64f,.51f,.33f};
+            canvas.rect(x,y,385,240,{.08f,.12f,.12f});canvas.rect(x,y,385,88,tint);canvas.triangle(x+20,y+88,x+114,y+19,x+188,y+88,tint*.55f);canvas.triangle(x+125,y+88,x+224,y+35,x+360,y+88,tint*.65f);
+            canvas.text(x+16,y+105,w.value("name",std::string{}),2.25f,WHITE);canvas.text(x+16,y+147,biome+" / SEEDED ARENA",1.4f,MUTED);
+            if(button(x+16,y+183,353,40,"ENTER WORLD",true))choose_room(w.value("id",0));
+        }
+        if(button(47,711,385,50,"RANDOM WORLD",true))choose_room();
+        canvas.text(461,725,"YOUR ACCOUNT, EQUIPMENT AND SCORES TRAVEL WITH YOU.",1.4f,MUTED);
     }
     void leaderboard_view(){
         canvas.rect(0,0,1280,800,{.025f,.041f,.044f,.98f});canvas.text(46,26,"ARENA LEADERBOARDS",3.5f,GOLD);
