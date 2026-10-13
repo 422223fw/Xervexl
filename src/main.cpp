@@ -277,7 +277,7 @@ struct App {
 
 App* app=nullptr;
 LRESULT CALLBACK window_proc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
-    if(!app)return DefWindowProc(w,msg,wp,lp);
+    if(!app)return DefWindowProcW(w,msg,wp,lp);
     switch(msg){
         case WM_CLOSE:app->running=false;return 0;
         case WM_SIZE:app->width=std::max(1,static_cast<int>(LOWORD(lp)));app->height=std::max(1,static_cast<int>(HIWORD(lp)));return 0;
@@ -296,7 +296,7 @@ LRESULT CALLBACK window_proc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
         case WM_CHAR:
             if(app->focus>=0){std::string& text=app->fields[app->focus];if(wp==8&&!text.empty())text.pop_back();else if(wp>=32&&wp<127&&text.size()<254)text+=static_cast<char>(wp);}
             return 0;
-        default:return DefWindowProc(w,msg,wp,lp);
+        default:return DefWindowProcW(w,msg,wp,lp);
     }
 }
 
@@ -319,7 +319,7 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
         RECT size{0,0,1280,800};AdjustWindowRect(&size,WS_OVERLAPPEDWINDOW,FALSE);
         state.window=CreateWindowW(wc.lpszClassName,L"Xervexl | motlon",WS_OVERLAPPEDWINDOW|WS_VISIBLE,CW_USEDEFAULT,CW_USEDEFAULT,size.right-size.left,size.bottom-size.top,nullptr,nullptr,instance,nullptr);
         if(!state.window)throw std::runtime_error("Cannot create game window");
-        SetWindowTextA(state.window,"Xervexl | motlon");ShowWindow(state.window,SW_SHOWNORMAL);UpdateWindow(state.window);
+        SetWindowTextW(state.window,L"Xervexl | motlon");ShowWindow(state.window,SW_SHOWNORMAL);UpdateWindow(state.window);
         state.engine(state.vulkan,args.find("--opengl")==std::string::npos&&args.find("--vulkan")==std::string::npos);state.net.queue("/health");
         if(args.find("--leaders")!=std::string::npos)state.leaders();
         if(auto pos=args.find("--world=");pos!=std::string::npos)state.choose_room(std::stoi(args.substr(pos+8)));else if(state.smokeArena)state.play();
