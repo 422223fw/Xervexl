@@ -1,7 +1,7 @@
 {
   "name": "Xervexl",
   "company": "motlon",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "native_windows_sword_arena",
   "renderers": ["OpenGL", "Vulkan"],
   "default_server": "http://127.0.0.1:8765",

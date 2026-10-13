@@ -1,4 +1,4 @@
-# Xervexl 0.3 — progression and combat rules
+# Xervexl 0.3.1 — progression and combat rules
 
 Implemented on the authoritative server in `rules.py`, `combat.py`, `arena_features.py` and `server.py`. Clients cannot submit XP, skill, crowns, rank, upgrades or hit rewards. New accounts start at **rank 1, 0 XP, 0 skill points, 100 crowns and a knife**. Updating the game does not reset existing accounts.
 
@@ -14,6 +14,8 @@ Implemented on the authoritative server in `rules.py`, `combat.py`, `arena_featu
 If you die at rank V to a rank K opponent, the skill penalty is **2 × V + 4 × max(0, V − K)**. For a rank 10 victim, losing to rank 10 costs 20 skill; losing to rank 1 costs 56. Skill floors at zero; XP and earned rank are not taken away on death. The HUD reports actual skill lost, which can be below the nominal penalty when you have few skill points.
 
 Rank L begins at **75 × L × (L − 1) total XP**: rank 1 = 0, rank 2 = 150, rank 3 = 450, rank 4 = 900. Rank is separate from skill and spendable crowns. Bots receive shuffled AI depths 2–5 and randomized starting ranks, then gain XP and lose skill under the same combat rules. Bot progress lasts for their current server life; registered accounts persist across server restarts.
+
+Every elimination immediately restores the living killer to **their full maximum health, including permanent health upgrades, and 100 stamina**. This applies to players and bots, including melee, ranged, magic, burning and reflected-arrow kills. Nonlethal hits do not restore either resource. A posthumous kill still earns its rewards but does not revive a dead shooter.
 
 Leaderboards cover skill, rank, XP, current crowns and eliminations. They include registered accounts on this server and active combatants, with BOT/PLAYER labels. They do not aggregate independent internet servers. Guests who have not entered the arena are not persistent leaderboard entries.
 

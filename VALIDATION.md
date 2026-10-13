@@ -1,4 +1,10 @@
-# Validation — Xervexl 0.3, 13 October 2026
+# Validation — Xervexl 0.3.1, 13 October 2026
+
+- **55 regression and integration tests passed** after adding full health/stamina restoration on eliminations. Added checks for restoring upgraded maximum health in the actual client state, leaving nonlethal attackers unchanged, and retaining the existing death/respawn rules for posthumous projectile kills. Existing reflected-arrow and burning kill tests now also verify the credited killer's full refill.
+- Restoration is applied in the authoritative shared damage path, covering player and bot eliminations with every supported weapon/damage source. The native client receives the new health/stamina values through its existing state polling.
+- The live local server restarted at **0.3.1** and the game reopened. The account JSON's SHA-256 remained unchanged across that restart. The portable archive was rebuilt with the updated server and metadata.
+
+## Historical 0.3 checks — 13 October 2026
 
 - **52 regression and integration tests passed**. New coverage checks exact rank 1 / 0 XP / 0 skill / 100 crowns starting values, logout/session invalidation, purchased quick-slots, account persistence, no-cost directional guard, wrong-direction protection, full-stamina counter disarm, attack cancellation, movement/body direction, deterministic world generation, independent filler bots per world, room isolation for melee/projectiles/drops, two consecutive arrow reflections, footing economics/probabilities and real rope pulling.
 - Native C++20 build succeeded. The installed `build/Xervexl.exe` was replaced only after its old processes exited and its SHA-256 was verified against the tested candidate. The local authoritative server restarted at **0.3.0**, exposing **five worlds and 46 catalog items**. A final interactive launch verified a live window titled **Xervexl | motlon** after correcting Unicode window-message handling.

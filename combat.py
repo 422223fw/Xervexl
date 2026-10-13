@@ -95,6 +95,8 @@ class Combat:
             penalty=death_penalty(victim["level"],attacker["level"])
             actual_loss=min(victim["skill"],penalty)
             self.grant(attacker,**reward)
+            if attacker["dead"]<=0:
+                attacker.update(hp=attacker["max_hp"],stamina=100.)
             self.grant(victim,skill=-penalty)
             self.emit("kill",source=attacker["name"],target=victim["name"],source_id=attacker["id"],target_id=victim["id"],
                       xp=reward["xp"],skill=reward["skill"],coins=reward["coins"],lost_skill=actual_loss)

@@ -38,6 +38,8 @@ Armour/helmets protect different hit regions, and heavy gear slows movement. Arr
 
 Repeated hits deplete balance and can knock you down. The expensive **Permanent footing** shop upgrade reduces that chance. Grappling rope pulls you toward a fighter or an aimed landmark; a lasso can trip and pull an opponent. Both are purchased weapons placed in your quick-slots.
 
+Every elimination restores the living killer to full maximum health, including shop health upgrades, and 100 stamina. Players and bots receive the same refill, including for ranged, magic and reflected-arrow eliminations.
+
 ## Multiplayer
 
 The server supplies enough bots to keep **at least ten total combatants in each active world**. When ten humans share a world, it removes that world's filler bots. Bot skill depths are shuffled among 2, 3, 4 and 5. Two native clients can fight in the same authoritative arena, including clients using different graphics APIs. The Worlds screen lets you pick a biome or enter another random world. Automatic entry prefers a populated human world. Terrain landmarks are generated from server seeds and shared by all clients; damage, arrows, dropped weapons and ropes remain inside their world. Equipment and progress follow you between worlds.

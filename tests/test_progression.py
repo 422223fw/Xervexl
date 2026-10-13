@@ -46,6 +46,30 @@ class ProgressionTests(unittest.TestCase):
         self.assertGreater(death_penalty(10,1),death_penalty(10,10))
         self.assertGreater(death_penalty(10,5),death_penalty(10,15))
 
+    def test_elimination_refills_upgraded_health_and_stamina_in_client_state(self):
+        self.a.update(hp=19.,stamina=3.,health_upgrades=4,max_hp=180.)
+        self.b["hp"]=1
+        self.arena.strike(self.a)
+        snapshot=self.arena.request("/arena/state",{},self.tokens[0])
+        fighter=next(f for f in snapshot["fighters"] if f["id"]==self.a["id"])
+        self.assertEqual((fighter["hp"],fighter["stamina"],fighter["max_hp"]),(180,100,180))
+        self.assertEqual(self.a["kills"],1)
+
+    def test_nonlethal_hit_does_not_refill_the_attacker(self):
+        self.a.update(hp=19.,stamina=3.)
+        self.arena.strike(self.a)
+        self.assertGreater(self.b["hp"],0)
+        self.assertLess(self.b["hp"],100)
+        self.assertEqual((self.a["hp"],self.a["stamina"]),(19,3))
+
+    def test_posthumous_projectile_elimination_does_not_revive_dead_shooter(self):
+        self.a["weapon"]="bow";self.b.update(z=5,hp=1)
+        self.arena.shoot(self.a,ITEMS["bow"])
+        self.a.update(dead=2.,hp=0.,stamina=12.)
+        self.arena.tick_objects(.3)
+        self.assertEqual(self.a["kills"],1)
+        self.assertEqual((self.a["dead"],self.a["hp"],self.a["stamina"]),(2,0,12))
+
     def test_perfect_parry_costs_zero_stamina_and_earns_progress(self):
         self.rank(self.a,6)
         self.b.update(block=True,block_since=self.arena.clock,stamina=0)
@@ -104,16 +128,17 @@ class ProgressionTests(unittest.TestCase):
         self.assertEqual(len(self.arena.projectiles),0)
 
     def test_arrow_can_be_deflected_and_credit_changes_owner(self):
-        self.a.update(weapon="bow",hp=1);self.b.update(z=5,weapon="longsword",block=True,block_since=self.arena.clock)
+        self.a.update(weapon="bow",hp=1);self.b.update(z=5,weapon="longsword",block=True,block_since=self.arena.clock,hp=32,stamina=18)
         before=self.b["stamina"]
         self.arena.shoot(self.a,ITEMS["bow"]);self.arena.tick_objects(.25)
-        self.assertEqual(self.b["hp"],100)
+        self.assertEqual(self.b["hp"],32)
         self.assertEqual(self.b["stamina"],before)
         self.assertEqual(self.arena.projectiles[0]["owner"],self.b["id"])
         self.assertGreater(self.b["xp"],0)
         self.arena.tick_objects(.3)
         self.assertGreater(self.a["dead"],0)
         self.assertEqual(self.b["kills"],1)
+        self.assertEqual((self.b["hp"],self.b["stamina"]),(100,100))
 
     def test_ordinary_shield_block_reduces_projectile_damage(self):
         self.a["weapon"]="crossbow";self.b.update(z=5,block=True,block_since=-999,shield="kite")
@@ -161,10 +186,12 @@ class ProgressionTests(unittest.TestCase):
 
     def test_fire_damage_ticks_and_keeps_kill_credit(self):
         self.arena.maintain_bots=lambda:None
+        self.a.update(hp=50.,stamina=10.)
         self.b["hp"]=8
         self.arena.damage(self.a,self.b,1,"body",magic="fire")
         for _ in range(32):self.arena.tick(.1)
         self.assertEqual(self.a["kills"],1)
+        self.assertEqual((self.a["hp"],self.a["stamina"]),(100,100))
         self.assertGreater(self.b["dead"],0)
         self.assertTrue(any(e["kind"]=="burn" for e in self.arena.events))
 

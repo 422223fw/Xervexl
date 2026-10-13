@@ -1,7 +1,7 @@
 """Shared authoritative progression, equipment and damage rules for Xervexl."""
 import math
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 WEAPONS = [
     dict(id="fists",name="Bare hands",price=0,damage=5,reach=1.05,cooldown=.48,family="unarmed",hidden=True),
