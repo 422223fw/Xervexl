@@ -6,6 +6,7 @@
 #include <deque>
 #include <chrono>
 #include "json.hpp"
+#include "login_store.hpp"
 using json=nlohmann::json;
 inline std::string decimal_text(const json& obj,const std::string& key,const std::string& fallback="0"){
     auto it=obj.find(key);if(it==obj.end())return fallback;if(it->is_string())return it->get<std::string>();if(it->is_number())return it->dump();return fallback;
@@ -13,19 +14,35 @@ inline std::string decimal_text(const json& obj,const std::string& key,const std
 inline std::string compact_decimal(const std::string& value){return value.size()<=10?value:value.substr(0,1)+"."+value.substr(1,2)+"e"+std::to_string(value.size()-1);}
 
 struct Network {
-    struct Task { std::string route;json body; };
+    struct Task { std::string route;json body;std::string authOverride,baseOverride; };
     std::mutex mutex;std::deque<Task> tasks;
     json world=json::object(),profile=json::object(),input=json::object(),catalog=json::array(),boards=json::object(),worlds=json::array();
     std::string url="http://127.0.0.1:8765",token,error,message,player;
-    std::atomic<bool> running{true};bool connected=false,joined=false,busy=false;
+    std::atomic<bool> running{true};bool connected=false,joined=false,busy=false,restoring=false;
+    unsigned generation=0;
+    LoginStore loginStore;
     std::thread worker;
-    Network(){worker=std::thread([this]{run();});}
+    explicit Network(const std::string& sessionFile="data/login-session.bin"):loginStore(sessionFile){url=loginStore.last_server();token=loginStore.token(url);restoring=!token.empty();worker=std::thread([this]{run();});}
     ~Network(){running=false;if(worker.joinable())worker.join();}
     void queue(const std::string& route,const json& body=json::object()){
         std::lock_guard<std::mutex> guard(mutex);tasks.push_back({route,body});busy=true;error.clear();message.clear();
     }
     void server(const std::string& address){
-        std::lock_guard<std::mutex> guard(mutex);url=address;token.clear();player.clear();world=json::object();profile=json::object();catalog=json::array();boards=json::object();joined=false;connected=false;tasks.clear();error.clear();message="Server address updated.";
+        std::lock_guard<std::mutex> guard(mutex);auto oldBase=url,oldToken=token;bool wasJoined=joined;
+        url=LoginStore::address(address);generation++;player.clear();world=json::object();profile=json::object();catalog=json::array();boards=json::object();joined=false;connected=false;tasks.clear();error.clear();message="Server address updated.";
+        try{loginStore.select(url);}catch(const std::exception&){message="Server selected. Could not save this setting.";}
+        token=loginStore.token(url);restoring=!token.empty();busy=false;
+        if(wasJoined&&!oldToken.empty())tasks.push_back({"/arena/leave",json::object(),oldToken,oldBase});
+    }
+    void logout(){
+        std::lock_guard<std::mutex> guard(mutex);auto previous=token;generation++;tasks.clear();token.clear();profile=json::object();world=json::object();boards=json::object();player.clear();joined=false;restoring=false;error.clear();busy=false;message="Logged out. Your progress is saved.";
+        if(!previous.empty()){
+            try{loginStore.logout(url,previous);}catch(const std::exception&){
+                // Remove a stale cache if writing the pending revocation failed.
+                if(!DeleteFileW(loginStore.path.c_str())&&GetLastError()!=ERROR_FILE_NOT_FOUND)message="Logged out here. Could not remove the saved sign-in file.";
+            }
+            tasks.push_back({"/auth/logout",json::object(),previous,url});busy=true;
+        }
     }
     static std::wstring wide(const std::string& value){
         int n=MultiByteToWideChar(CP_UTF8,0,value.c_str(),static_cast<int>(value.size()),nullptr,0);
@@ -58,25 +75,48 @@ struct Network {
     }
     void run(){
         auto last=std::chrono::steady_clock::now();
+        auto retry=last;auto logoutRetry=last;
         while(running){
-            Task task;std::string base,auth;bool work=false;
+            Task task;std::string base,auth;bool work=false;unsigned epoch=0;
             {
-                std::lock_guard<std::mutex> guard(mutex);base=url;auth=token;
+                std::lock_guard<std::mutex> guard(mutex);base=url;auth=token;epoch=generation;
+                auto now=std::chrono::steady_clock::now();
                 if(!tasks.empty()){task=tasks.front();tasks.pop_front();work=true;}
-                else if(joined&&std::chrono::steady_clock::now()-last>std::chrono::milliseconds(45)){task={"/arena/state",input};work=true;last=std::chrono::steady_clock::now();}
+                else if(!loginStore.pending(url).empty()&&now>=logoutRetry){task={"/auth/logout",json::object(),loginStore.pending(url),url};work=true;logoutRetry=now+std::chrono::seconds(3);}
+                else if(restoring&&now>=retry){task={"/auth/resume",json::object()};work=true;retry=now+std::chrono::seconds(2);}
+                else if(joined&&now-last>std::chrono::milliseconds(45)){task={"/arena/state",input};work=true;last=now;}
+                if(!task.authOverride.empty())auth=task.authOverride;if(!task.baseOverride.empty())base=task.baseOverride;
             }
             if(work){
                 try{
                     auto result=request(base,task.route,task.body,auth);
-                    if(result.contains("token")&&!auth.empty()){
-                        try{request(base,"/arena/leave",json::object(),auth);}catch(const std::exception&){}
+                    std::unique_lock<std::mutex> guard(mutex);
+                    if(task.route=="/auth/logout"&&!task.authOverride.empty()){
+                        if(result.value("logged_out",false)||result.value("code",std::string{})=="auth_required"){
+                            try{loginStore.acknowledge(base,auth);}catch(const std::exception&){message="Logged out. Saved logout cleanup will be retried.";}
+                        }
+                        busy=!tasks.empty();continue;
                     }
-                    std::lock_guard<std::mutex> guard(mutex);
-                    if(base!=url)continue;
-                    if(result.contains("error")){error=result["error"].get<std::string>();busy=!tasks.empty();}
+                    if(!task.baseOverride.empty()){busy=!tasks.empty();continue;}
+                    if(base!=url||epoch!=generation){
+                        if(result.contains("token")){auto abandoned=result["token"].get<std::string>();guard.unlock();try{request(base,"/auth/logout",json::object(),abandoned);}catch(const std::exception&) {}}
+                        continue;
+                    }
+                    if(result.contains("error")){
+                        error=result["error"].get<std::string>();busy=!tasks.empty();
+                        if(result.value("code",std::string{})=="auth_required"&&auth==token){
+                            try{loginStore.forget(base,auth);}catch(const std::exception&){}
+                            token.clear();profile=json::object();player.clear();world=json::object();boards=json::object();joined=false;restoring=false;
+                        }
+                    }
                     else{
                         if(task.route!="/arena/state"||!connected)error.clear();connected=true;
-                        if(result.contains("token")){token=result["token"].get<std::string>();joined=false;player.clear();world=json::object();}
+                        if(result.contains("token")){
+                            auto fresh=result["token"].get<std::string>();
+                            try{if(!auth.empty()&&auth!=fresh)loginStore.logout(base,auth);loginStore.remember(base,fresh);}catch(const std::exception&){message="Signed in. Could not save sign-in on this computer.";}
+                            token=fresh;restoring=false;joined=false;player.clear();world=json::object();
+                        }
+                        if(task.route=="/auth/resume")restoring=false;
                         if(result.contains("profile"))profile=result["profile"];
                         if(result.contains("catalog"))catalog=result["catalog"];
                         if(result.contains("worlds"))worlds=result["worlds"];
@@ -87,11 +127,14 @@ struct Network {
                         if(task.route=="/arena/join")joined=true;
                         if(task.route=="/arena/world")joined=true;
                         if(task.route=="/arena/leave")joined=false;
-                        if(result.value("logged_out",false)){token.clear();player.clear();profile=json::object();world=json::object();boards=json::object();joined=false;}
+                        if(task.route=="/arena/state"&&joined&&player.empty()){
+                            // An inactive/other-device avatar can disappear while sign-in stays valid.
+                            joined=false;
+                        }
                         busy=!tasks.empty();
                     }
                 }catch(const std::exception& e){
-                    std::lock_guard<std::mutex> guard(mutex);if(base==url){error=e.what();connected=false;busy=!tasks.empty();}
+                    std::lock_guard<std::mutex> guard(mutex);if(base==url&&epoch==generation){error=e.what();connected=false;busy=!tasks.empty();}
                     std::this_thread::sleep_for(std::chrono::milliseconds(120));
                 }
             }else std::this_thread::sleep_for(std::chrono::milliseconds(5));

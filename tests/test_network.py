@@ -35,7 +35,7 @@ class NetworkTests(unittest.TestCase):
                     conn=HTTPConnection("127.0.0.1",http.server_port,timeout=3)
                     conn.request("POST",route,"{}",{"Content-Type":"application/json"})
                     response=conn.getresponse();value=json.loads(response.read());conn.close()
-                    self.assertEqual(response.status,400,value)
+                    self.assertEqual(response.status,400 if route=='/auth/guest' else 401,value)
                 a=request("/auth/register",dict(username="NetworkA",email="networka@example.com",password="test-passphrase"))["token"]
                 b=request("/auth/register",dict(username="NetworkB",email="networkb@example.com",password="test-passphrase"))["token"]
                 aid=request("/arena/join",token=a)["player"]

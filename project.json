@@ -1,7 +1,7 @@
 {
   "name": "Xervexl",
   "company": "motlon",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "native_windows_sword_arena",
   "renderers": ["OpenGL", "Vulkan"],
   "default_server": "http://127.0.0.1:8765",
@@ -15,6 +15,7 @@
   "weapon_quick_slots": 5,
   "starting_stats": {"rank": 1, "xp": 0, "skill": 0, "coins": 100},
   "account_required": true,
+  "remember_login": "until_logout_with_windows_user_encrypted_client_token_and_hashed_server_grants",
   "rank_xp_rule": "rank_2_cost_79_then_multiply_previous_cost_by_next_rank",
   "graphics_mode": "single_executable_with_runtime_switching_and_auto_fallback",
   "account_storage": "data/accounts.json",

@@ -26,6 +26,7 @@ from combat import Combat
 from arena_features import ArenaFeatures
 from bot_brain import BotBrain
 from bot_learning import BotLearning, LearningCombat
+from session_store import SessionStore
 
 ROOT = Path(__file__).resolve().parent
 BOT_NAMES = ["Ash", "Bram", "Cinder", "Dusk", "Flint", "Gale", "Hawke", "Ivar", "Juno", "Kestrel", "Lark", "Morrow"]
@@ -48,6 +49,10 @@ def password_matches(password, stored):
     return hmac.compare_digest(password_hash(password, stored.split(":")[0]), stored)
 
 
+class AuthenticationError(ValueError):
+    pass
+
+
 class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
     def __init__(self, data_path=None, seed=None):
         self.path = Path(data_path or ROOT / "data" / "accounts.json")
@@ -61,6 +66,8 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
             self.save()
         if not self.path.exists(): self.save()
         self.sessions = {}
+        session_name = 'sessions.json' if self.path.name == 'accounts.json' else self.path.stem+'.sessions.json'
+        self.remembered = SessionStore(self.path.with_name(session_name))
         self.resets = {}
         self.fighters = {}
         self.events = []
@@ -102,6 +109,8 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
 
     def session(self, user, guest=False):
         token = secrets.token_urlsafe(32)
+        if not guest and user.get('password'):
+            self.remembered.add(token, user)
         self.sessions[token] = dict(user=user, guest=guest, touched=time.monotonic(), fighter="")
         return dict(token=token, profile=self.profile(user),catalog=CATALOG)
 
@@ -151,8 +160,16 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
 
     def authenticate(self, token):
         s = self.sessions.get(token)
+        user = self.remembered.find(token, self.users)
+        if not s and user:
+            s = dict(user=user, guest=False, touched=time.monotonic(), fighter='')
+            self.sessions[token] = s
+        if s and not s['guest'] and user is not s['user']:
+            self.fighters.pop(s['fighter'], None)
+            self.sessions.pop(token, None)
+            s = None
         if not s:
-            raise ValueError("Please sign in again.")
+            raise AuthenticationError("Please sign in again.")
         s["touched"] = time.monotonic()
         return s
 
@@ -235,6 +252,8 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                     raise ValueError("Password: 8-128 characters.")
                 user = self.users[entry[0]]
                 user["password"] = password_hash(password)
+                self.save()
+                self.remembered.revoke_user(user['username'])
                 self.resets.pop(code_hash)
                 for key, s in list(self.sessions.items()):
                     if s["user"] is user:
@@ -243,12 +262,18 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                 self.maintain_bots()
                 self.save()
                 return dict(message="Password updated. Sign in with your new password.")
+            if route=='/auth/logout':
+                # Idempotent so a logout queued while offline can be retried.
+                self.remembered.remove(token)
+                s=self.sessions.pop(token,None)
+                if s:self.fighters.pop(s['fighter'],None)
+                self.maintain_bots()
+                return dict(logged_out=True,message="Logged out. Your account progress is saved.")
             s = self.authenticate(token)
             user = s["user"]
-            if route=="/auth/logout":
-                self.fighters.pop(s["fighter"],None);self.sessions.pop(token);self.maintain_bots()
-                return dict(logged_out=True,message="Logged out. Your account progress is saved.")
             self.require_account(s)
+            if route=='/auth/resume':
+                return dict(authenticated=True,profile=self.profile(user),catalog=CATALOG,worlds=self.worlds)
             if route=="/inventory/assign":return self.inventory_assign(s,body.get("slot"),str(body.get("item","")))
             if route=="/inventory/switch":return self.inventory_switch(s,body.get("slot"))
             if route=="/arena/world":
@@ -546,6 +571,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.respond(429,dict(error="Too many account requests. Wait one minute.")); return
             token = self.headers.get("Authorization", "").removeprefix("Bearer ")
             self.respond(200,self.arena.request(self.path,body,token))
+        except AuthenticationError as error:
+            self.respond(401,dict(error=str(error),code='auth_required'))
         except ValueError as error:
             self.respond(400,dict(error=str(error)))
         except Exception:

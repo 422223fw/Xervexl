@@ -17,28 +17,33 @@ struct App {
     std::string localMessage;float messageUntil=0,damageUntil=0,lastEventTime=-1;
     Network net;Canvas canvas;std::unique_ptr<Renderer> renderer;
     std::map<std::string,Vec> positions;
-    json world,profile,catalog,boards,worlds;std::string player,status,error,notice;bool connected=false,busy=false;
+    json world,profile,catalog,boards,worlds;std::string player,status,error,notice;bool connected=false,busy=false,savedLogin=false,restoringLogin=false;
     float hp=100,maxHp=100,stamina=100,death=0,spawnSafe=0,spellCd=0;int kills=0,coins=100,level=1,skill=0;std::string xp="0";
     int shopCategory=0,shopPage=0,leaderTab=0,seenEvent=0;float lastBoards=-10;std::string aimZone="body",heldWeapon="knife",heldSpell;
     bool automatic=true,switchSmoke=false;int switchStep=0;std::vector<std::string> seenApis;
     bool smoke=false,smokeArena=false;std::string screenshot;
     bool captureNext=false,authSubmitted=false;std::string alignedPlayer;
     CombatControls controls;
-    App(){try{std::ifstream file("data/controls.json");if(file){json saved;file>>saved;controls.easy=saved.value("easy",true);}}catch(const std::exception&) {}}
+    explicit App(const std::string& sessionFile="data/login-session.bin"):net(sessionFile){fields[4]=net.url;try{std::ifstream file("data/controls.json");if(file){json saved;file>>saved;controls.easy=saved.value("easy",true);}}catch(const std::exception&) {}}
     void control_mode(bool easy){controls.easy=easy;controls.leftWasDown=false;try{std::filesystem::create_directories("data");std::ofstream file("data/controls.json");file<<json{{"easy",easy}}.dump();if(!file)throw std::runtime_error("write");}catch(const std::exception&){toast("Controls changed. Could not save this setting.");}}
     bool authPlayRequested=false;int requestedWorld=-2;
     std::string previewMove;float previewPhase=.18f;
     bool signed_in(){return !profile.empty()&&!profile.value("guest",true);}
     void switch_slot(int slot){if(!profile.empty())net.queue("/inventory/switch",{{"slot",slot}});}
-    bool require_sign_in(bool enter=false,int worldId=-2){if(signed_in())return false;authPlayRequested=enter;requestedWorld=worldId;pendingPlay=false;screen=Screen::Auth;authMode=1;focus=0;toast("Sign up or sign in to enter the arena.");return true;}
+    bool require_sign_in(bool enter=false,int worldId=-2){
+        if(signed_in())return false;
+        authPlayRequested=enter;requestedWorld=worldId;pendingPlay=false;
+        {std::lock_guard<std::mutex> guard(net.mutex);if(net.restoring||!net.profile.empty()){toast("Restoring your signed-in account...");return true;}}
+        screen=Screen::Auth;authMode=1;focus=0;toast("Sign up or sign in to enter the arena.");return true;
+    }
     void choose_room(int id=-1){if(require_sign_in(true,id))return;net.queue("/arena/world",id<0?json::object():json{{"world_id",id}});pendingPlay=true;screen=Screen::Home;}
 
     bool hover(float x,float y,float w,float h){return mouseX>=x&&mouseX<=x+w&&mouseY>=y&&mouseY<=y+h;}
-    bool button(float x,float y,float w,float h,const std::string& label,bool primary=false){
+    bool button(float x,float y,float w,float h,const std::string& label,bool primary=false,bool allowBusy=false){
         bool hot=hover(x,y,w,h);Colour fill=primary?(hot?Colour{1,.76f,.39f}:GOLD):(hot?Colour{.17f,.22f,.21f,.97f}:Colour{.10f,.14f,.14f,.94f});
         canvas.rect(x,y,w,h,fill);canvas.border(x,y,w,h,primary?GOLD:Colour{.26f,.32f,.30f});
         canvas.text(x+(w-Canvas::text_width(label,2))/2,y+(h-22)/2,label,2,primary?INK:WHITE);
-        return hot&&clicked&&!busy;
+        return hot&&clicked&&(allowBusy||!busy);
     }
     void field(float x,float y,float w,const std::string& label,int index,bool secret=false){
         canvas.text(x,y,label,1.6f,MUTED);canvas.rect(x,y+22,w,43,{.065f,.09f,.10f,.98f});canvas.border(x,y+22,w,43,focus==index?GOLD:Colour{.23f,.29f,.28f});
@@ -62,7 +67,7 @@ struct App {
     }
     void leaders(){if(require_sign_in())return;net.queue("/leaderboards");lastBoards=time;screen=Screen::Leaders;}
     void snapshot(){
-        std::lock_guard<std::mutex> guard(net.mutex);world=net.world;profile=net.profile;catalog=net.catalog;boards=net.boards;worlds=net.worlds;player=net.player;connected=net.connected;busy=net.busy;error=net.error;notice=net.message;net.message.clear();
+        std::lock_guard<std::mutex> guard(net.mutex);world=net.world;profile=net.profile;catalog=net.catalog;boards=net.boards;worlds=net.worlds;player=net.player;connected=net.connected;busy=net.busy;savedLogin=!net.token.empty();restoringLogin=net.restoring;error=net.error;notice=net.message;net.message.clear();
     }
     void update(float dt){
         time+=dt;snapshot();
@@ -73,7 +78,8 @@ struct App {
             else if(authed&&error.empty())net.queue("/arena/join");
             else if(!error.empty())pendingPlay=false;
         }
-        if(screen==Screen::Auth&&authSubmitted&&signed_in()&&authMode<2&&!busy&&error.empty()){screen=Screen::Home;focus=-1;fields[1].clear();authSubmitted=false;toast("Hello, "+profile.value("username",std::string("FIGHTER"))+"! Your equipment and progress are ready.");if(authPlayRequested){authPlayRequested=false;if(requestedWorld==-2)play();else choose_room(requestedWorld);}}
+        if(screen==Screen::Auth&&authSubmitted&&signed_in()&&authMode<2&&!busy&&error.empty()){screen=Screen::Home;focus=-1;fields[1].clear();authSubmitted=false;toast("Hello, "+profile.value("username",std::string("FIGHTER"))+"! Your equipment and progress are ready.");}
+        if(authPlayRequested&&signed_in()&&!busy&&!restoringLogin){authPlayRequested=false;screen=Screen::Home;focus=-1;if(requestedWorld==-2)play();else choose_room(requestedWorld);}
         if(arena&&player.empty()&&!pendingPlay)arena=false;
         cameraDistance+=(cameraTarget-cameraDistance)*std::min(1.f,dt*12);
         if(!profile.empty()){coins=profile.value("coins",100);kills=profile.value("kills",0);level=profile.value("level",1);skill=profile.value("skill",0);xp=decimal_text(profile,"xp");maxHp=profile.value("max_hp",100.f);}
@@ -176,16 +182,16 @@ struct App {
         canvas.rect(0,0,1280,82,{.025f,.045f,.047f,.88f});emblem(52,39,43);canvas.text(89,27,"MOTLON",2.4f);canvas.text(89,51,"INDEPENDENT ARENA COMBAT",1.1f,MUTED);
         if(button(640,20,176,43,"LEADERBOARDS"))leaders();
         if(button(830,20,140,43,"ARMOURY"))screen=Screen::Shop;
-        if(button(983,20,110,43,"SETTINGS"))screen=Screen::Settings;
-        if(button(1106,20,140,43,signed_in()?"LOGOUT":"SIGN IN")){authPlayRequested=false;if(signed_in()){pendingPlay=false;arena=false;net.queue("/auth/logout");fields[1].clear();}else{screen=Screen::Auth;authMode=0;focus=0;}}
+        if(button(983,20,110,43,"SETTINGS",false,true))screen=Screen::Settings;
+        if(button(1106,20,140,43,signed_in()||savedLogin?"LOGOUT":"SIGN IN",false,true)){authPlayRequested=false;if(signed_in()||savedLogin){pendingPlay=false;arena=false;net.logout();profile=json::object();savedLogin=restoringLogin=false;fields[1].clear();}else{screen=Screen::Auth;authMode=0;focus=0;}}
         canvas.text(57,157,"STEEL. SAND. SURVIVAL.",1.9f,GOLD);
         canvas.text(52,215,"XERVEXL",8.2f,WHITE);
         canvas.rect(57,299,88,3,GOLD);
         canvas.text(57,334,"NO CROWN. NO FINAL ROUND.",2.1f,WHITE);
         canvas.text(57,380,"An open arena of blades and nerve.\nRead your opponent. Choose your strike.\nFall, return, and fight again.",1.75f,MUTED);
-        if(button(57,483,343,70,busy?"CONNECTING...":!signed_in()?"SIGN UP TO PLAY":(!player.empty()?"RETURN TO ARENA":"ENTER THE ARENA"),true))play();
+        if(button(57,483,343,70,restoringLogin?"RESTORING ACCOUNT...":busy?"CONNECTING...":!signed_in()?"SIGN UP TO PLAY":(!player.empty()?"RETURN TO ARENA":"ENTER THE ARENA"),true))play();
         if(button(414,483,142,70,"HOW TO PLAY"))screen=Screen::Help;
-        canvas.text(57,585,signed_in()?("HELLO, "+profile.value("username",std::string("FIGHTER"))):"CREATE YOUR ACCOUNT / ALREADY REGISTERED? SIGN IN",1.5f,signed_in()?GOLD:MUTED);
+        canvas.text(57,585,signed_in()?("HELLO, "+profile.value("username",std::string("FIGHTER"))):restoringLogin?"RECONNECTING TO YOUR SAVED ACCOUNT...":"CREATE YOUR ACCOUNT / ALREADY REGISTERED? SIGN IN",1.5f,signed_in()?GOLD:MUTED);
         canvas.rect(57,631,490,96,{.07f,.10f,.11f,.93f});canvas.border(57,631,490,96,{.19f,.25f,.25f});canvas.rect(57,631,3,96,GOLD);
         canvas.text(77,651,"A BLADE IS ALL YOU NEED",1.7f,GOLD);canvas.text(77,680,"Earn XP, skill and crowns. Build your arsenal.\nBlades, bows, armour and rare arcane weapons.",1.45f,WHITE);
         canvas.rect(930,600,294,125,{.04f,.065f,.067f,.89f});canvas.text(951,619,"FIVE LIVING WORLDS",1.5f,GOLD);
@@ -193,7 +199,7 @@ struct App {
         if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.5",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.6",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});
@@ -230,7 +236,7 @@ struct App {
     void settings(){
         panel("ARENA SETTINGS","A LOCAL SERVER WORKS NOW. REMOTE SERVERS CAN BE ADDED LATER.");
         field(315,233,650,"SERVER ADDRESS",4);
-        if(button(315,321,650,51,"CONNECT TO THIS SERVER",true)){
+        if(button(315,321,650,51,"CONNECT TO THIS SERVER",true,true)){
             arena=false;pendingPlay=false;net.queue("/arena/leave");net.server(fields[4]);net.queue("/health");positions.clear();
         }
         canvas.text(315,419,"ONE GAME / BOTH GRAPHICS ENGINES",1.7f,GOLD);
@@ -320,7 +326,9 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
     try{
         wchar_t executable[MAX_PATH];GetModuleFileNameW(nullptr,executable,MAX_PATH);
         std::filesystem::path root=std::filesystem::path(executable).parent_path().parent_path();SetCurrentDirectoryW(root.c_str());
-        App state;app=&state;std::string args=command;state.vulkan=args.find("--opengl")==std::string::npos;state.smoke=args.find("--smoke")!=std::string::npos;state.smokeArena=args.find("--arena")!=std::string::npos;state.switchSmoke=args.find("--switch")!=std::string::npos;
+        std::string args=command,sessionFile="data/login-session.bin";
+        if(auto pos=args.find("--session-file=");pos!=std::string::npos){size_t start=pos+15,end=args.find(' ',start);sessionFile=args.substr(start,end==std::string::npos?end:end-start);}
+        App state(sessionFile);app=&state;state.vulkan=args.find("--opengl")==std::string::npos;state.smoke=args.find("--smoke")!=std::string::npos;state.smokeArena=args.find("--arena")!=std::string::npos;state.switchSmoke=args.find("--switch")!=std::string::npos;
         if(args.find("--shop")!=std::string::npos)state.screen=Screen::Shop;
         if(args.find("--ranged")!=std::string::npos)state.shopCategory=1;
         if(args.find("--defence")!=std::string::npos)state.shopCategory=2;
