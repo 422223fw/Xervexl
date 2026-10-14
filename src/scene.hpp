@@ -127,7 +127,7 @@ inline void held_equipment(Canvas& c,const std::string& id,Vec hand,Vec tip,Vec 
     }
 }
 inline void battlefield_objects(Canvas& c,const json& world,float){
-    if(world.contains("drops"))for(const auto& d:world["drops"]){float y=d.value("y",.06f),a=d.value("age",0.f)*2;Vec p{d.value("x",0.f),y,d.value("z",0.f)},front{std::sin(a),0,std::cos(a)},side{std::cos(a),0,-std::sin(a)};held_equipment(c,d.value("weapon",std::string("knife")),p,p+front*1.1f,side,front);}
+    if(world.contains("drops"))for(const auto& d:world["drops"]){float y=d.value("y",.06f),a=d.value("age",0.f)*2;auto hint=world.value("pickup",json::object());if(y<=.22f)a=1.85f;Vec p{d.value("x",0.f),y,d.value("z",0.f)},front{std::sin(a),0,std::cos(a)},side{std::cos(a),0,-std::sin(a)};held_equipment(c,d.value("weapon",std::string("knife")),p,p+front*1.1f,side,front);if(!hint.empty()&&hint.value("id",std::string{})==d.value("id",std::string{})){Colour glow{.95f,.69f,.32f,.75f};for(int i=0;i<16;i++){float t=i*PI/8;Vec marker=p+Vec{std::sin(t)*.42f,.015f,std::cos(t)*.42f};c.box(marker,{.045f,.012f,.045f},glow);}}}
     if(world.contains("projectiles"))for(const auto& p:world["projectiles"]){Vec v{p.value("x",0.f),p.value("y",1.f),p.value("z",0.f)},direction=norm({p.value("vx",0.f),p.value("vy",0.f),p.value("vz",1.f)});std::string kind=p.value("kind",std::string{});
         if(kind=="slingshot")c.ellipsoid(v,{.055f,.055f,.055f},{.53f,.55f,.51f},0,4,6);
         else if(kind=="firebolt"||kind=="frostbolt"||kind=="staff"){Colour col=kind=="frostbolt"?Colour{.35f,.77f,.95f}:Colour{1,.51f,.18f};c.ellipsoid(v,{.12f,.12f,.12f},col,0,4,8);c.beam(v-direction*.65f,v,.027f,col);}

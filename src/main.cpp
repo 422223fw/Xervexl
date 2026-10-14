@@ -108,6 +108,7 @@ struct App {
             if((kind=="parry"&&e.value("target",std::string{})==player)||(kind=="deflect"&&e.value("source",std::string{})==player))toast("PERFECT DEFENCE / XP + SKILL / ZERO STAMINA COST");
             if(kind=="disarm"&&e.value("source",std::string{})==player)toast("DISARM / XP + SKILL EARNED");
             if(kind=="disarm"&&e.value("target",std::string{})==player)toast("WEAPON LOST / SKILL LOST / F TO RECOVER YOUR BLADE");
+            if(kind=="pickup"&&e.value("source",std::string{})==player)toast("PICKED UP: "+item_info(e.value("weapon",std::string("knife"))).value("name",std::string("WEAPON")));
             if(kind=="level"&&e.value("target",std::string{})==player)toast("LEVEL UP! RANK "+std::to_string(e.value("level",1)));
             if(kind=="fall"&&e.value("target",std::string{})==player)toast("KNOCKED DOWN / RECOVERING FOOTING");
         }
@@ -163,6 +164,15 @@ struct App {
             fighter(canvas,a,time);fighter(canvas,b,time);
         }
         canvas.flush3();
+        auto pickup=world.value("pickup",json::object());
+        if(arena&&!pickup.empty()&&world.contains("drops"))for(const auto& d:world["drops"]){
+            if(d.value("id",std::string{})!=pickup.value("id",std::string{}))continue;
+            float x,y,depth;Vec p{d.value("x",0.f),d.value("y",.06f)+.3f,d.value("z",0.f)};
+            if(canvas.project(p,x,y,depth)&&depth<10&&x>90&&x<1190&&y>100&&y<555){
+                std::string label=pickup.value("own",false)?"[F] YOUR WEAPON":"[F] PICK UP";float w=Canvas::text_width(label,1.5f)+24;
+                canvas.rect(x-w/2,y-9,w,29,{.035f,.055f,.058f,.94f});canvas.text(x-w/2+12,y,label,1.5f,GOLD);
+            }
+        }
         if(arena&&world.contains("fighters"))for(auto& f:world["fighters"]){
             if(f.value("id",std::string{})==player||f.value("dead",0.f)>0)continue;
             float x,y,d;Vec p{f.value("x",0.f),2.55f,f.value("z",0.f)};
@@ -199,7 +209,7 @@ struct App {
         if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.6",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.6.1",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});
@@ -261,6 +271,13 @@ struct App {
         canvas.text(1013,35,std::to_string(world.value("humans",0))+" PLAYERS / "+std::to_string(world.value("bots",0))+" BOTS",1.4f,WHITE);canvas.text(1013,61,renderer->name(),1.15f,GOLD);
         canvas.line(634,400,646,400,1.3f,{1,1,1,.6f});canvas.line(640,394,640,406,1.3f,{1,1,1,.6f});
         if(spawnSafe>0){canvas.rect(443,145,394,44,{.035f,.055f,.058f,.89f});canvas.text(463,158,"SAFE ENTRY / DAMAGE STARTS SHORTLY",1.55f,GOLD);}
+        auto pickup=world.value("pickup",json::object());
+        if(!pickup.empty()&&death<=0){
+            std::string name=item_info(pickup.value("weapon",std::string("knife"))).value("name",std::string("WEAPON"));
+            canvas.rect(424,565,432,53,{.035f,.055f,.058f,.96f});canvas.border(424,565,432,53,GOLD);
+            canvas.text(440,576,std::string(pickup.value("ready",false)?"HOLD F: ":"RECOVERING / HOLD F: ")+(pickup.value("own",false)?"YOUR ":"")+name,1.3f,GOLD);
+            canvas.text(440,598,heldWeapon=="fists"?"PICK UP AND EQUIP YOUR BLADE":"PICK UP / CURRENT WEAPON DROPS",1.05f,MUTED);
+        }
         canvas.rect(28,657,370,112,{.035f,.055f,.058f,.94f});canvas.text(47,673,profile.value("username",std::string("FIGHTER")),1.6f,WHITE);
         canvas.text(47,701,"HEALTH",1.1f,MUTED);canvas.rect(132,700,239,12,{.16f,.20f,.18f});canvas.rect(132,700,239*hp/maxHp,12,{.62f,.26f,.19f});canvas.text(263,672,std::to_string(static_cast<int>(hp))+" / "+std::to_string(static_cast<int>(maxHp)),1.2f,MUTED);
         canvas.text(47,728,"STAMINA",1.1f,MUTED);canvas.rect(132,727,239,9,{.16f,.20f,.18f});canvas.rect(132,727,239*stamina/100,9,GOLD);

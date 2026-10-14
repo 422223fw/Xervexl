@@ -97,7 +97,7 @@ class ProgressionTests(unittest.TestCase):
         self.b.update(skill=9,weapon="greatsword")
         self.arena.drop_weapon(self.b)
         self.assertEqual(self.b["skill"],9,"Voluntary drop is not a skill penalty")
-        self.arena.tick_objects(.7)
+        for _ in range(40):self.arena.tick_objects(1/30)
         drop=self.arena.drops[0];self.a.update(x=drop["x"],z=drop["z"])
         self.assertTrue(self.arena.pickup_weapon(self.a))
         self.assertEqual(self.a["weapon"],"greatsword")

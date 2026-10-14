@@ -26,7 +26,7 @@ The compiled game is `build/Xervexl.exe`. Auto mode prefers Vulkan and falls bac
 | Right mouse just before impact | Face and match the incoming attack within 180 ms to disarm; XP + skill |
 | Z / X / C | Aim at legs / body / head |
 | Q | Disarm an exhausted or recovering opponent |
-| G / F | Drop weapon / pick up nearby weapon |
+| G / hold F | Drop weapon / recover a nearby weapon from the floor |
 | B | Cast equipped purchased spell |
 | T | Live skill / rank / XP / crowns / eliminations leaderboards |
 | Shift | Short dodge, costs stamina |
@@ -42,6 +42,8 @@ Combat animations follow readable sword cuts, close guards and side steps observ
 Your body and footsteps follow walking direction; attack and guard turn the body toward your aim. Facing an attack with the matching guard absorbs it without stamina loss. Counter a left cut with right guard, a right cut with left guard, and an overhead with high guard. A centred cross guard also covers horizontal cuts and thrusts. A correctly timed counter disarms even a full-stamina attacker. Holding guard does not repeatedly earn XP.
 
 Armour/helmets protect different hit regions, and heavy gear slows movement. Arrows have visible 3D shafts, heads and feathers. Face an arriving arrow and time a blade block to return it toward its launch position. Borrowed weapons do not add permanent ownership. Dodges briefly evade strikes. Death respawns you after 3.5 seconds. New spawns have 1.5 seconds of entry grace during which they neither deal nor receive damage.
+
+**Recover your sword from the floor:** walk within 1.7 metres and hold **F**. A highlighted ground weapon, `[F] YOUR WEAPON` label and pickup prompt show the target. Your dropped weapon takes priority over nearby foreign weapons. Holding F retries while the sword lands or while you recover from being disarmed; one successful hold equips one weapon and needs a release before another pickup. G drops the current weapon voluntarily. Picking up while armed swaps weapons and drops the previous one; a punch/queued swing is cancelled during the 0.3-second equip recovery. Dead or fallen characters cannot pick up. Foreign weapons remain temporary and never add permanent inventory or currency.
 
 Repeated hits deplete balance and can knock you down. The expensive **Permanent footing** shop upgrade reduces that chance. Grappling rope pulls you toward a fighter or an aimed landmark; a lasso can trip and pull an opponent. Both are purchased weapons placed in your quick-slots.
 

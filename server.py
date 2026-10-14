@@ -371,6 +371,7 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                     if a["world_id"]!=room:continue
                     public.append({k:public_integer(a[k]) if k in ("xp","skill","coins","kills","deaths","level") else a[k] for k in ("id","name","bot","depth","x","z","yaw","hp","max_hp","stamina","weapon","shield","armour","helmet","spell","kills","deaths","block","jump","dodge","dead","attack","attack_id","windup","spawn_safe","level","xp","skill","coins","disarmed","spell_cd","ward","slow","cooldown","world_id","body_yaw","move_x","move_z","gait","guard_dir","attack_started","attack_windup","attack_duration","aim_zone","balance","fall","fall_duration")})
                 return dict(player=s["fighter"], time=self.clock, fighters=public, events=[e for e in self.events if e.get("world_id",room)==room][-12:],
+                            pickup=self.pickup_hint(f) if f else {},
                             profile=self.profile(user),humans=sum(not a["bot"] for a in public),bots=sum(a["bot"] for a in public),
                             drops=[d for d in self.drops if d["world_id"]==room],projectiles=[{k:v for k,v in p.items() if not k.startswith('_')} for p in self.projectiles if p["world_id"]==room],
                             ropes=[r for r in self.ropes if r["world_id"]==room],world=self.worlds[room])
@@ -425,9 +426,11 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                 for timer in ("spell_cd","slow","disarmed","ward_time"):f[timer]=max(0.,f[timer]-dt)
                 if f["ward_time"]<=0:f["ward"]=0.
                 if inp.get("drop") and not f["last_drop"]:self.drop_weapon(f)
-                if inp.get("pickup") and not f["last_pickup"]:self.pickup_weapon(f)
+                if inp.get("pickup") and not f["last_pickup"]:
+                    f['last_pickup']=self.pickup_weapon(f)
+                elif not inp.get('pickup'):f['last_pickup']=False
                 if inp.get("cast") and not f["last_cast"]:self.cast_spell(f)
-                for action in ("drop","pickup","cast"):f["last_"+action]=bool(inp.get(action))
+                for action in ("drop","cast"):f["last_"+action]=bool(inp.get(action))
                 if f["bot"]:f["last_pickup"]=False
                 f["cooldown"] = max(0.,f["cooldown"]-dt)
                 f["dodge"] = max(0.,f["dodge"]-dt)

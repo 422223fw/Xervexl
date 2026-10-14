@@ -66,15 +66,31 @@ class Combat:
         if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
         return True
 
+    def pickup_candidate(self,f):
+        if f['dead']>0:return None
+        nearby=[d for d in self.drops if d['world_id']==f['world_id'] and d['age']>=.45 and d['y']<=.22
+                and d['expires']>self.clock and math.hypot(d['x']-f['x'],d['z']-f['z'])<1.7]
+        # Recover your dropped blade first when several weapons lie at your feet.
+        return min(nearby,key=lambda d:(d['owner']!=f['id'],math.hypot(d['x']-f['x'],d['z']-f['z']))) if nearby else None
+
+    def pickup_hint(self,f):
+        chosen=self.pickup_candidate(f)
+        if not chosen:return {}
+        return dict(id=chosen['id'],weapon=chosen['weapon'],own=chosen['owner']==f['id'],
+                    ready=f['disarmed']<=0 and f['fall']<=0,distance=round(math.hypot(chosen['x']-f['x'],chosen['z']-f['z']),2))
+
     def pickup_weapon(self,f):
-        if f["dead"]>0 or f["disarmed"]>0:return False
-        nearby=[d for d in self.drops if d["world_id"]==f["world_id"] and d["age"]>=.45 and math.hypot(d["x"]-f["x"],d["z"]-f["z"])<1.7]
-        if not nearby:return False
-        chosen=min(nearby,key=lambda d:math.hypot(d["x"]-f["x"],d["z"]-f["z"]))
+        if f["dead"]>0 or f["disarmed"]>0 or f['fall']>0:return False
+        chosen=self.pickup_candidate(f)
+        if not chosen:return False
         if f["weapon"]!="fists":self.drop_weapon(f)
         self.drops.remove(chosen);f["weapon"]=chosen["weapon"];f["cooldown"]=.3;f["disarmed"]=0
+        # A punch already in flight must not become an instant sword strike.
+        ticket=f.get('attack_learning')
+        if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
+        f.update(attack='',windup=0.,queued_attack='',queued_repeat=False)
         # Picking up another player's weapon never adds it to permanent inventory.
-        self.emit("pickup",source=f["id"],weapon=chosen["weapon"])
+        self.emit("pickup",source=f["id"],weapon=chosen["weapon"],drop_id=chosen['id'],own=chosen['owner']==f['id'])
         return True
 
     def damage(self,attacker,victim,base,zone,kind="hit",magic="",pierce=0.,learning_ticket=None):
