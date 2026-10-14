@@ -31,8 +31,13 @@ class NetworkTests(unittest.TestCase):
                 self.assertEqual(response.status,200,value)
                 return value
             try:
-                a=request("/auth/guest")["token"]
-                b=request("/auth/guest")["token"]
+                for route in ("/auth/guest","/arena/join","/arena/world"):
+                    conn=HTTPConnection("127.0.0.1",http.server_port,timeout=3)
+                    conn.request("POST",route,"{}",{"Content-Type":"application/json"})
+                    response=conn.getresponse();value=json.loads(response.read());conn.close()
+                    self.assertEqual(response.status,400,value)
+                a=request("/auth/register",dict(username="NetworkA",email="networka@example.com",password="test-passphrase"))["token"]
+                b=request("/auth/register",dict(username="NetworkB",email="networkb@example.com",password="test-passphrase"))["token"]
                 aid=request("/arena/join",token=a)["player"]
                 bid=request("/arena/join",token=b)["player"]
                 snapshot=request("/arena/state",token=b)

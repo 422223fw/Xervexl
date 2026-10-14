@@ -15,8 +15,8 @@ class MotionTests(unittest.TestCase):
         (ROOT/"data"/"tests").mkdir(parents=True,exist_ok=True)
         self.temp=tempfile.TemporaryDirectory(dir=ROOT/"data"/"tests")
         self.path=Path(self.temp.name)/"accounts.json";self.arena=Arena(self.path,seed=17);self.tokens=[]
-        for _ in range(2):
-            token=self.arena.request("/auth/guest",{})["token"];self.arena.request("/arena/join",{},token);self.tokens.append(token)
+        for number in range(2):
+            token=self.arena.request("/auth/register",dict(username="Fighter"+str(number),email=f"fighter{number}@example.com",password="test-passphrase"))["token"];self.arena.request("/arena/join",{},token);self.tokens.append(token)
         self.a=self.arena.fighters[self.arena.sessions[self.tokens[0]]["fighter"]]
         self.b=self.arena.fighters[self.arena.sessions[self.tokens[1]]["fighter"]]
         self.a.update(x=0,z=0,yaw=0,body_yaw=0,spawn_safe=0,weapon="longsword",attack="left",world_id=0)

@@ -7,6 +7,10 @@
 #include <chrono>
 #include "json.hpp"
 using json=nlohmann::json;
+inline std::string decimal_text(const json& obj,const std::string& key,const std::string& fallback="0"){
+    auto it=obj.find(key);if(it==obj.end())return fallback;if(it->is_string())return it->get<std::string>();if(it->is_number())return it->dump();return fallback;
+}
+inline std::string compact_decimal(const std::string& value){return value.size()<=10?value:value.substr(0,1)+"."+value.substr(1,2)+"e"+std::to_string(value.size()-1);}
 
 struct Network {
     struct Task { std::string route;json body; };

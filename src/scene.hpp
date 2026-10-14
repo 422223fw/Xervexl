@@ -4,19 +4,14 @@
 #include <map>
 #include <algorithm>
 #include <cctype>
-
-constexpr float PI=3.14159265f;
-struct Vec {float x,y,z;Vec operator+(Vec v)const{return{x+v.x,y+v.y,z+v.z};}Vec operator-(Vec v)const{return{x-v.x,y-v.y,z-v.z};}Vec operator-()const{return{-x,-y,-z};}Vec operator*(float f)const{return{x*f,y*f,z*f};}};
-inline float dot(Vec a,Vec b){return a.x*b.x+a.y*b.y+a.z*b.z;}
-inline Vec cross(Vec a,Vec b){return{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x};}
-inline Vec norm(Vec a){float d=std::sqrt(dot(a,a));return a*(1/std::max(.0001f,d));}
+#include "poses.hpp"
 struct Colour{float r,g,b,a=1;Colour operator*(float f)const{return{r*f,g*f,b*f,a};}};
 const Colour GOLD{.91f,.64f,.29f},INK{.045f,.065f,.068f},WHITE{.93f,.92f,.85f},MUTED{.55f,.62f,.60f};
 struct Triangle{Vec a,b,c;Colour colour;float depth;};
 
 struct Canvas{
     std::vector<Vertex> mesh;std::vector<Triangle> triangles;
-    Vec camera{},forward{},right{},up{};float aspect=1.6f;
+    Vec camera{},forward{},right{},up{},focus{};float aspect=1.6f;bool following=false;
     void begin(int w,int h){mesh.clear();triangles.clear();aspect=static_cast<float>(w)/h;}
     void triangle(float x1,float y1,float x2,float y2,float x3,float y3,Colour c){
         mesh.push_back({x1/1280,y1/800,c.r,c.g,c.b,c.a});mesh.push_back({x2/1280,y2/800,c.r,c.g,c.b,c.a});mesh.push_back({x3/1280,y3/800,c.r,c.g,c.b,c.a});
@@ -41,7 +36,7 @@ struct Canvas{
         int size=static_cast<int>(std::round(scale*10));float originX=x;
         for(unsigned char ch:text){if(ch=='\n'){y+=size*1.55f;x=originX;continue;}const auto& g=glyph(size,ch,scale>=5);for(auto span:g.spans){Colour tint=colour;tint.a*=span.alpha;rect(x+span.x,y+span.y,span.w,1,tint);}x+=g.advance;}
     }
-    void set_camera(Vec eye,Vec target){camera=eye;forward=norm(target-eye);right=norm(cross({0,1,0},forward));up=cross(forward,right);}
+    void set_camera(Vec eye,Vec target){camera=eye;focus=target;forward=norm(target-eye);right=norm(cross({0,1,0},forward));up=cross(forward,right);}
     bool project(Vec p,float& x,float& y,float& depth)const{Vec d=p-camera;depth=dot(d,forward);if(depth<.12f)return false;x=640+dot(d,right)/depth*700/aspect;y=400-dot(d,up)/depth*438;return true;}
     void tri3(Vec a,Vec b,Vec c,Colour colour,bool shade=true){
         float depth=dot((a+b+c)*(1.f/3)-camera,forward);if(std::max({dot(a-camera,forward),dot(b-camera,forward),dot(c-camera,forward)})<.12f)return;
@@ -92,7 +87,7 @@ inline void environment(Canvas& c,float time,const json& world=json::object()){
         if(i%8==0){Vec flag{p.x,4.4f,p.z};c.beam(flag+Vec{0,-.4f,0},flag+Vec{0,3.2f,0},.055f,{.25f,.24f,.20f});float wind=std::sin(time*2+i)*.3f;c.quad(flag+Vec{0,3,0},flag+Vec{1.7f,2.7f,wind},flag+Vec{1.7f,1.1f,wind},flag+Vec{0,1.4f,0},{.37f,.12f,.10f});}
     }
     for(int i=0;i<(forest?40:24);i++){float a=i*2*PI/(forest?40:24)+seed*.00001f,r=49+(i%3)*3;Vec p{std::sin(a)*r,0,std::cos(a)*r};c.cylinder(p,.28f,3.5f,{.26f,.22f,.15f},7);c.cylinder(p+Vec{0,2.5f,0},2.7f,5,snow?Colour{.51f,.62f,.56f}:lava?Colour{.17f,.19f,.16f}:Colour{.20f,.31f,.24f},8,0);}
-    if(world.contains("props"))for(const auto& p:world["props"]){Vec pos{p.value("x",0.f),0,p.value("z",0.f)};float radius=p.value("radius",1.f),height=p.value("height",2.f);if(p.value("kind",std::string{})=="pillar"){c.cylinder(pos,radius,height,snow?Colour{.62f,.69f,.71f}:Colour{.48f,.45f,.38f},8);c.box(pos+Vec{0,height,0},{radius*2.5f,.2f,radius*2.5f},{.62f,.59f,.48f});}else c.ellipsoid(pos+Vec{0,height*.4f,0},{radius,height*.55f,radius},snow?Colour{.73f,.77f,.77f}:Colour{.37f,.39f,.35f},seed*.001f,4,7);}
+    if(world.contains("props"))for(const auto& p:world["props"]){Vec pos{p.value("x",0.f),0,p.value("z",0.f)};float radius=p.value("radius",1.f),height=p.value("height",2.f);std::string kind=p.value("kind",std::string{});if(kind=="tree"){c.cylinder(pos,radius*.65f,height,{.29f,.23f,.15f},7);Vec crown=pos+Vec{0,height*.8f,0};Colour leaves{.22f,.34f,.21f};Vec segment=c.focus-c.camera;float t=std::clamp(dot(crown-c.camera,segment)/std::max(.001f,dot(segment,segment)),0.f,1.f);Vec nearest=c.camera+segment*t;if(dot(c.camera-crown,c.camera-crown)<radius*radius*10.2f||(c.following&&dot(nearest-crown,nearest-crown)<radius*radius*7.3f))leaves.a=.16f;c.ellipsoid(crown,{radius*2.7f,height*.45f,radius*2.7f},leaves,seed*.01f,4,8);}else if(kind=="ruin"){c.box(pos+Vec{0,height*.5f,0},{radius*1.7f,height,radius*1.3f},snow?Colour{.67f,.70f,.71f}:Colour{.60f,.53f,.40f});c.box(pos+Vec{radius*.35f,height+.15f,0},{radius*.8f,.3f,radius*1.4f},{.48f,.46f,.40f});}else if(kind=="pillar"){c.cylinder(pos,radius,height,snow?Colour{.62f,.69f,.71f}:Colour{.48f,.45f,.38f},8);c.box(pos+Vec{0,height,0},{radius*2.1f,.2f,radius*2.1f},{.62f,.59f,.48f});}else c.ellipsoid(pos+Vec{0,height*.4f,0},{radius,height*.55f,radius},snow?Colour{.73f,.77f,.77f}:Colour{.37f,.39f,.35f},seed*.001f,4,7);}
     for(int i=0;i<12;i++){float a=i*2*PI/12;Vec p{std::sin(a)*35,0,std::cos(a)*35};c.box(p+Vec{0,.45f,0},{1.5f,.9f,1.2f},{.37f,.28f,.17f},a);c.box(p+Vec{0,.95f,0},{1.6f,.1f,1.3f},{.49f,.37f,.21f},a);}
     // Decorative inset central circle and radial scoring lines.
     for(int i=0;i<72;i++){float a=i*2*PI/72,b=(i+1)*2*PI/72;c.quad({std::sin(a)*10,.005f,std::cos(a)*10},{std::sin(b)*10,.005f,std::cos(b)*10},{std::sin(b)*10.18f,.005f,std::cos(b)*10.18f},{std::sin(a)*10.18f,.005f,std::cos(a)*10.18f},{.78f,.67f,.46f},false);}
@@ -140,27 +135,22 @@ inline void battlefield_objects(Canvas& c,const json& world,float){
     }
     if(world.contains("ropes")&&world.contains("fighters"))for(const auto& rope:world["ropes"]){json owner;for(const auto& f:world["fighters"])if(f["id"]==rope["owner"]){owner=f;break;}if(owner.is_null())continue;Vec start{owner.value("x",0.f),1.2f,owner.value("z",0.f)},end{rope.value("x",0.f),rope.value("y",1.1f),rope.value("z",0.f)};float grow=std::clamp((world.value("time",0.f)-rope.value("created",0.f))/.25f,0.f,1.f);end=start+(end-start)*grow;for(int i=0;i<12;i++){float a=i/12.f,b=(i+1)/12.f;Vec p=start+(end-start)*a+Vec{0,-std::sin(a*PI)*.3f,0},q=start+(end-start)*b+Vec{0,-std::sin(b*PI)*.3f,0};c.beam(p,q,.018f,{.64f,.50f,.28f});}}
 }
+inline CombatPose pose_for(const json& f,float time){return combat_pose({f.value("attack",std::string{}),f.value("guard_dir",std::string("centre")),f.value("block",false),time-f.value("attack_started",time),f.value("attack_windup",.18f),f.value("attack_duration",.46f),f.value("aim_zone",std::string("body"))});}
 inline void blade_pose(const json& f,float time,Vec p,Vec front,Vec side,float length,Vec& hand,Vec& tip){
-    hand=p+side*.48f+front*.25f+Vec{0,1.16f,0};tip=hand+front*.45f+Vec{0,length*.8f,0};
-    std::string attack=f.value("attack",std::string{});float phase=std::clamp((time-f.value("attack_started",time))/std::max(.1f,f.value("attack_duration",.5f)),0.f,1.f);
-    if(f.value("block",false)){std::string dir=f.value("guard_dir",std::string("centre"));hand=p+front*.5f+Vec{0,1.38f,0};tip=hand+(dir=="left"?-side:side)*(dir=="centre"?.5f:.8f)+Vec{0,dir=="up"?length:length*.40f,0};return;}
-    if(attack.empty()||phase>=1)return;
-    float duration=std::max(.1f,f.value("attack_duration",.5f)),impact=std::clamp((duration-.32f)/duration,.2f,.7f);
-    float stroke=std::clamp((phase-impact*.45f)/(impact*1.1f),0.f,1.f),ease=stroke*stroke*(3-2*stroke);
-    if(attack=="overhead"){hand=p+front*.5f+Vec{0,1.65f-ease*.4f,0};tip=hand+front*(.15f+ease*length)+Vec{0,length*(1-ease)-.25f*ease,0};}
-    else if(attack=="thrust"){hand=p+side*.22f+front*(.3f+std::sin(phase*PI)*.55f)+Vec{0,1.2f,0};tip=hand+front*length;}
-    else{float sign=attack=="left"?-1.f:1.f;float a=sign*(1.7f-ease*3.4f);Vec dir=front*std::cos(a)+side*std::sin(a);hand=p+front*.45f+side*(std::sin(a)*.3f)+Vec{0,1.35f,0};tip=hand+dir*length+Vec{0,.12f,0};}
+    CombatPose pose=pose_for(f,time);Vec shoulder=p+side*.34f+Vec{0,1.43f,0};hand=p+side*pose.hand.x+Vec{0,pose.hand.y,0}+front*pose.hand.z;
+    std::string weapon=f.value("weapon",std::string{});if(f.value("shield",std::string{}).empty()&&(weapon=="longsword"||weapon=="greatsword"||weapon=="katana"||weapon=="spear"||weapon=="halberd")){hand=limit_reach(p-side*.34f+Vec{0,1.43f,0},hand,.66f);}
+    hand=limit_reach(shoulder,hand,.70f);tip=hand+norm(side*pose.direction.x+Vec{0,pose.direction.y,0}+front*pose.direction.z)*length;
 }
 inline void first_person_arms(Canvas& c,const json& f,float yaw,float pitch,float time){
     if(f.value("dead",0.f)>0||f.value("fall",0.f)>0)return;
     Vec front{std::sin(yaw)*std::cos(pitch),-std::sin(pitch),std::cos(yaw)*std::cos(pitch)},side{std::cos(yaw),0,-std::sin(yaw)};
-    Vec base=c.camera-Vec{0,1.4f,0}+front*.58f,hand,tip;blade_pose(f,time,base,front,side,weapon_length(f.value("weapon",std::string("knife"))),hand,tip);
-    Vec elbow=c.camera+front*.25f+side*.37f+Vec{0,-.48f,0};c.beam(elbow,hand,.09f,{.28f,.34f,.31f});c.ellipsoid(hand,{.085f,.085f,.085f},{.68f,.47f,.34f},yaw,4,6);
+    Vec base=c.camera-Vec{0,1.6f,0}+front*.58f,hand,tip;blade_pose(f,time,base,front,side,weapon_length(f.value("weapon",std::string("knife"))),hand,tip);
+    Vec shoulder=base+side*.34f+Vec{0,1.43f,0},elbow=solve_joint(shoulder,hand,side-Vec{0,.6f,0},.36f);c.beam(shoulder,elbow,.075f,{.28f,.34f,.31f});c.beam(elbow,hand,.066f,{.28f,.34f,.31f});c.ellipsoid(hand,{.075f,.075f,.075f},{.68f,.47f,.34f},yaw,4,6);
     held_equipment(c,f.value("weapon",std::string("knife")),hand,tip,side,front);
 }
 inline void fighter(Canvas& c,const json& f,float time,bool self=false){
     if(f.value("dead",0.f)>0)return;
-    float x=f.value("x",0.f),z=f.value("z",0.f),yaw=f.value("body_yaw",f.value("yaw",0.f));
+    CombatPose pose=pose_for(f,time);float x=f.value("x",0.f),z=f.value("z",0.f),yaw=f.value("body_yaw",f.value("yaw",0.f))+pose.spin+pose.twist;
     float jump=f.value("jump",0.f);float lift=jump>0?std::sin((.55f-jump)/.55f*PI)*.65f:0;
     Vec p{x,lift,z};Vec front{std::sin(yaw),0,std::cos(yaw)},side{std::cos(yaw),0,-std::sin(yaw)};
     std::string id=f.value("id",std::string{});unsigned hash=0;for(unsigned char a:id)hash=hash*31+a;
@@ -168,27 +158,26 @@ inline void fighter(Canvas& c,const json& f,float time,bool self=false){
     Colour skin{.69f,.49f,.34f},metal{.56f,.59f,.57f},dark{.18f,.18f,.16f};
     // Flattened ground shadow.
     for(int i=0;i<16;i++){float a=i*2*PI/16,b=(i+1)*2*PI/16;c.tri3({x,.02f,z},{x+std::sin(a)*.7f,.02f,z+std::cos(a)*.45f},{x+std::sin(b)*.7f,.02f,z+std::cos(b)*.45f},{.21f,.20f,.16f,.45f},false);}
-    size_t bodyBegin=c.triangles.size();float moving=std::min(1.f,std::hypot(f.value("move_x",0.f),f.value("move_z",0.f))/4.4f);float step=std::sin(f.value("gait",0.f))*.19f*moving;
-    c.ellipsoid(p+side*.18f+front*step+Vec{0,.43f,0},{.13f,.40f,.14f},dark,yaw);c.ellipsoid(p-side*.18f-front*step+Vec{0,.43f,0},{.13f,.40f,.14f},dark,yaw);
-    c.box(p+side*.18f+front*(step+.05f)+Vec{0,.1f,0},{.26f,.2f,.4f},dark,yaw);c.box(p-side*.18f+front*(-step+.05f)+Vec{0,.1f,0},{.26f,.2f,.4f},dark,yaw);
-    bool armour=!f.value("armour",std::string{}).empty();
-    c.ellipsoid(p+Vec{0,1.19f,0},{.35f,.43f,.23f},armour?metal:cloth,yaw,8,12);
-    c.ellipsoid(p+side*.35f+Vec{0,1.44f,0},{.19f,.16f,.22f},armour?metal:cloth,yaw);
-    c.ellipsoid(p-side*.35f+Vec{0,1.44f,0},{.19f,.16f,.22f},armour?metal:cloth,yaw);
+    size_t bodyBegin=c.triangles.size();float moving=std::min(1.f,std::hypot(f.value("move_x",0.f),f.value("move_z",0.f))/4.4f);float step=std::sin(f.value("gait",0.f))*.19f*moving;Vec travel=norm({f.value("move_x",0.f),0,f.value("move_z",0.f)});
+    for(int leg:{-1,1}){Vec hip=p+side*(leg*.16f)+Vec{0,.86f,0},ankle=p+side*(leg*.19f)+travel*(leg*step)+front*(pose.lunge*(leg==1?1:-.4f))+Vec{0,.12f+std::max(0.f,leg*std::sin(f.value("gait",0.f)))*moving*.09f,0};Vec knee=solve_joint(hip,ankle,front,.44f);c.beam(hip,knee,.105f,dark);c.ellipsoid(knee,{.105f,.105f,.105f},dark,yaw,4,6);c.beam(knee,ankle,.087f,dark);c.box(ankle+front*.055f-Vec{0,.025f,0},{.23f,.19f,.37f},dark,yaw);}
+    std::string armourId=f.value("armour",std::string{});Colour torso=armourId.empty()?cloth:armourId=="leather"?Colour{.34f,.25f,.17f}:armourId=="brigandine"?Colour{.29f,.23f,.20f}:armourId=="mail"?Colour{.43f,.46f,.45f}:metal;
+    c.ellipsoid(p+Vec{0,1.19f,0},{.35f,.43f,.23f},torso,yaw,8,12);
+    c.ellipsoid(p+side*.34f+Vec{0,1.44f,0},{.15f,.13f,.17f},torso,yaw);
+    c.ellipsoid(p-side*.34f+Vec{0,1.44f,0},{.15f,.13f,.17f},torso,yaw);
     c.box(p+Vec{0,.87f,0},{.69f,.12f,.40f},{.22f,.17f,.11f},yaw);c.box(p+front*.225f+Vec{0,.87f,0},{.13f,.13f,.05f},GOLD,yaw);
     c.cylinder(p+Vec{0,1.56f,0},.11f,.14f,skin,8);c.ellipsoid(p+Vec{0,1.87f,0},{.18f,.23f,.18f},skin,yaw,8,12);
-    c.ellipsoid(p+Vec{0,2.04f,0},{.195f,.12f,.195f},armour||!f.value("helmet",std::string{}).empty()?metal:Colour{.19f,.15f,.11f},yaw,6,12);
+    c.ellipsoid(p+Vec{0,2.04f,0},{.195f,.12f,.195f},!f.value("helmet",std::string{}).empty()?metal:Colour{.19f,.15f,.11f},yaw,6,12);
     c.ellipsoid(p+front*.178f+Vec{0,1.86f,0},{.04f,.075f,.06f},skin,yaw,4,6);
     c.box(p+front*.18f+side*.075f+Vec{0,1.92f,0},{.055f,.03f,.03f},dark,yaw);c.box(p+front*.18f-side*.075f+Vec{0,1.92f,0},{.055f,.03f,.03f},dark,yaw);
     bool block=f.value("block",false);std::string attack=f.value("attack",std::string{});
-    Vec shoulder=p+side*.42f+Vec{0,1.42f,0},hand=p+side*.53f+front*.34f+Vec{0,1.12f,0};
+    Vec shoulder=p+side*.34f+Vec{0,1.43f,0},hand=p+side*.32f+front*.3f+Vec{0,1.18f,0};
     Vec tip=hand+front*.75f+Vec{0,.9f,0};
     std::string weapon=f.value("weapon",std::string("knife"));float length=weapon_length(weapon);
     blade_pose(f,time,p,front,side,length,hand,tip);
-    Vec elbow=shoulder+(hand-shoulder)*.5f+side*.07f+Vec{0,-.11f,0};c.beam(shoulder,elbow,.11f,cloth);c.beam(elbow,hand,.09f,cloth);c.box(hand,{.17f,.17f,.17f},skin,yaw);
+    Vec elbow=solve_joint(shoulder,hand,side-Vec{0,.6f,0},.36f);c.beam(shoulder,elbow,.082f,cloth);c.ellipsoid(elbow,{.083f,.083f,.083f},cloth,yaw,4,6);c.beam(elbow,hand,.068f,cloth);c.box(hand,{.14f,.14f,.14f},skin,yaw);
     if(!attack.empty()&&f.value("windup",0.f)<=0&&f.value("cooldown",0.f)>.1f)c.beam(tip-front*.3f,tip,.018f,{.92f,.75f,.39f,.45f});
     held_equipment(c,weapon,hand,tip,side,front);
-    Vec left=p-side*.48f+front*(block?.5f:.12f)+Vec{0,1.15f,0};c.beam(p-side*.4f+Vec{0,1.42f,0},left,.12f,cloth);c.box(left,{.17f,.17f,.17f},skin,yaw);
+    Vec leftShoulder=p-side*.34f+Vec{0,1.43f,0},left=p-side*.37f+front*(block?.35f:.21f)+Vec{0,block?1.37f:1.19f,0};if(f.value("shield",std::string{}).empty()&&(weapon=="longsword"||weapon=="greatsword"||weapon=="katana"||weapon=="spear"||weapon=="halberd"))left=hand-norm(tip-hand)*.10f-side*.035f;left=limit_reach(leftShoulder,left,.70f);Vec leftElbow=solve_joint(leftShoulder,left,-side-Vec{0,.6f,0},.36f);c.beam(leftShoulder,leftElbow,.08f,cloth);c.beam(leftElbow,left,.067f,cloth);c.box(left,{.14f,.14f,.14f},skin,yaw);
     if(!f.value("shield",std::string{}).empty()){c.box(left+front*.1f,{.55f,.75f,.13f},dark,yaw);c.box(left+front*.18f,{.48f,.66f,.05f},metal,yaw);c.box(left+front*.22f,{.12f,.14f,.07f},GOLD,yaw);}
     float fall=f.value("fall",0.f);if(fall>0){float duration=f.value("fall_duration",1.25f),pose=std::min(1.f,(duration-fall)*7)*std::min(1.f,fall*4),a=pose*PI*.48f;auto rotate=[&](Vec v){Vec d=v-p;float localY=d.y,localZ=dot(d,front);return p+side*dot(d,side)+Vec{0,localY*std::cos(a)-localZ*std::sin(a)+.08f,0}+front*(localY*std::sin(a)+localZ*std::cos(a));};for(size_t i=bodyBegin;i<c.triangles.size();i++){auto& t=c.triangles[i];t.a=rotate(t.a);t.b=rotate(t.b);t.c=rotate(t.c);t.depth=dot((t.a+t.b+t.c)*(1.f/3)-c.camera,c.forward);}}
 }

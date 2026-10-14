@@ -2,7 +2,7 @@
 import math
 import secrets
 from rules import (ITEMS,RANGED,TARGET_HEIGHTS,BODY_MULTIPLIERS,PERSISTENT,
-                   level_for_xp,kill_reward,death_penalty,zone_from_height)
+                   level_for_xp,kill_reward,death_penalty,zone_from_height,public_integer,MOVES)
 
 
 def angle(a): return (a+math.pi)%math.tau-math.pi
@@ -41,7 +41,7 @@ class Combat:
         for f in self.fighters.values():
             key=f["id"] if f["bot"] or f["name"].startswith("Guest-") else "user:"+f["name"].lower()
             rows[key]=dict(username=f["name"],bot=f["bot"],**{k:f[k] for k in ("level","xp","skill","coins","kills")})
-        return {key:sorted(rows.values(),key=lambda r:(r[key],r["xp"],r["username"]),reverse=True)[:12]
+        return {key:[{k:public_integer(v) if isinstance(v,int) and not isinstance(v,bool) else v for k,v in row.items()} for row in sorted(rows.values(),key=lambda r:(r[key],r["xp"],r["username"]),reverse=True)[:12]]
                 for key in ("skill","level","xp","coins","kills")}
 
     def lift(self,f):
@@ -51,7 +51,7 @@ class Combat:
     def drop_weapon(self,f,disarmer=None):
         if f["weapon"]=="fists" or f["dead"]>0:return False
         item=f["weapon"]
-        f["weapon"]="fists";f["attack"]="";f["windup"]=0;f["cooldown"]=.6
+        f["weapon"]="fists";f["attack"]="";f["windup"]=0;f["cooldown"]=.6;f["queued_attack"]=""
         f["disarmed"]=1.0 if disarmer else .3
         yaw=f["yaw"]+.8
         self.drops.append(dict(id="drop-"+secrets.token_hex(4),weapon=item,owner=f["id"],
@@ -90,7 +90,7 @@ class Combat:
             victim["burn"]=3.;victim["burn_source"]=attacker["id"];victim["burn_tick"]=0.
         self.emit(kind,source=attacker["id"],target=victim["id"],damage=round(amount,1),zone=zone,weapon=attacker["weapon"])
         if victim["hp"]<=0:
-            victim["dead"]=3.5;victim["deaths"]+=1;victim["windup"]=0;victim["attack"]="";attacker["kills"]+=1
+            victim["dead"]=3.5;victim["deaths"]+=1;victim["windup"]=0;victim["attack"]="";victim["queued_attack"]="";attacker["kills"]+=1
             reward=kill_reward(victim["level"])
             penalty=death_penalty(victim["level"],attacker["level"])
             actual_loss=min(victim["skill"],penalty)
@@ -108,8 +108,9 @@ class Combat:
         if item["family"] in RANGED:
             self.shoot(attacker,item)
             return
-        reach=item["reach"]+(.35 if attacker["attack"]=="thrust" else 0)
-        arc=.30 if attacker["attack"]=="thrust" else .46 if attacker["attack"]=="overhead" else 1.05
+        move=MOVES.get(attacker["attack"],MOVES["left"])
+        reach=item["reach"]+move["reach"]
+        arc=move["arc"]
         for victim in list(self.fighters.values()):
             if victim is attacker or victim["dead"]>0 or victim["dodge"]>0 or victim["spawn_safe"]>0 or not self.same_world(attacker,victim):continue
             dx,dz=victim["x"]-attacker["x"],victim["z"]-attacker["z"]
@@ -130,7 +131,7 @@ class Combat:
                 vulnerable=victim["stamina"]<35 or (victim["cooldown"]>.1 and not victim["block"])
                 if vulnerable and self.drop_weapon(victim,attacker):return
                 continue
-            multiplier=1.2 if attacker["attack"]=="overhead" else .85 if attacker["attack"]=="thrust" else 1.
+            multiplier=move["multiplier"]
             base=item["damage"]*multiplier
             if victim["block"] and facing and armed:
                 if matching:base=0

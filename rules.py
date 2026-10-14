@@ -1,7 +1,12 @@
 """Shared authoritative progression, equipment and damage rules for Xervexl."""
 import math
+import sys
+from functools import lru_cache
 
-VERSION = "0.3.1"
+VERSION = "0.4.0"
+PROGRESSION_VERSION = 1
+# Authoritative XP can grow beyond the interpreter's default decimal digit limit.
+if hasattr(sys,"set_int_max_str_digits"):sys.set_int_max_str_digits(0)
 
 WEAPONS = [
     dict(id="fists",name="Bare hands",price=0,damage=5,reach=1.05,cooldown=.48,family="unarmed",hidden=True),
@@ -63,15 +68,47 @@ CATALOG = [i for i in WEAPONS+GEAR+SPELLS if not i.get("hidden")]
 RANGED = {"bow","crossbow","slingshot","staff"}
 TARGET_HEIGHTS = {"head":1.86,"body":1.25,"legs":.55}
 BODY_MULTIPLIERS = {"head":1.45,"body":1.,"arms":.82,"legs":.68}
+MOVES = {
+    "left":dict(cost=12,windup=.18,follow=.28,multiplier=1.,reach=0.,arc=1.05),
+    "right":dict(cost=12,windup=.18,follow=.28,multiplier=1.,reach=0.,arc=1.05),
+    "overhead":dict(cost=20,windup=.26,follow=.32,multiplier=1.2,reach=0.,arc=.46),
+    "thrust":dict(cost=12,windup=.18,follow=.26,multiplier=.85,reach=.35,arc=.30),
+    "spin":dict(cost=30,windup=.36,follow=.44,multiplier=.82,reach=0.,arc=math.pi),
+    "disarm":dict(cost=22,windup=.24,follow=.28,multiplier=0.,reach=0.,arc=.8),
+}
 PERSISTENT = ("xp","skill","coins","kills","deaths","parries","disarms","health_upgrades","stability_upgrades")
 
 
+@lru_cache(maxsize=512)
 def xp_for_level(level):
-    return 75*level*(level-1)
+    """Cumulative XP: each rank costs the previous cost times the new rank."""
+    total,cost=0,79
+    for rank in range(2,max(1,int(level))+1):
+        if rank>2:cost*=rank
+        total+=cost
+    return total
 
 
 def level_for_xp(xp):
-    return max(1,int((1+math.sqrt(1+4*max(0,xp)/75))/2))
+    xp=max(0,int(xp));rank,total,cost=1,0,79
+    while xp>=total+cost:
+        total+=cost;rank+=1;cost*=rank+1
+    return rank
+
+
+def public_integer(value):
+    """Keep small JSON numbers; send larger integers as exact decimal strings."""
+    return value if -(2**63)<=value<2**63 else str(value)
+
+
+def migrate_progression(user):
+    if user.get("progression_version",0)>=PROGRESSION_VERSION:return
+    old=max(0,int(user.get("xp",0)))
+    rank=max(1,(1+math.isqrt(1+4*old//75))//2)
+    old_start=75*rank*(rank-1);old_span=150*rank
+    start=xp_for_level(rank);span=xp_for_level(rank+1)-start
+    user["xp"]=start+(old-old_start)*span//old_span
+    user["progression_version"]=PROGRESSION_VERSION
 
 
 def health_price(upgrades):
@@ -86,6 +123,7 @@ def complete_account(user):
     for key,value in dict(xp=0,skill=0,parries=0,disarms=0,health_upgrades=0,helmet="",spell="").items():
         user.setdefault(key,value)
     user.setdefault("stability_upgrades",0)
+    user.setdefault("progression_version",PROGRESSION_VERSION)
     if "weapon_slots" not in user:
         equipped=user.get("weapon","knife")
         owned=[x for x in user.get("inventory",["knife"]) if x in ITEMS and ITEMS[x].get("kind","weapon")=="weapon" and not ITEMS[x].get("hidden")]

@@ -19,8 +19,8 @@ class ProgressionTests(unittest.TestCase):
         self.path=Path(self.temp.name)/"accounts.json"
         self.arena=mod.Arena(self.path,seed=9)
         self.tokens=[]
-        for _ in range(2):
-            token=self.arena.request("/auth/guest",{})["token"]
+        for number in range(2):
+            token=self.arena.request("/auth/register",dict(username="Fighter"+str(number),email=f"fighter{number}@example.com",password="test-passphrase"))["token"]
             self.arena.request("/arena/join",{},token);self.tokens.append(token)
         self.a=self.arena.fighters[self.arena.sessions[self.tokens[0]]["fighter"]]
         self.b=self.arena.fighters[self.arena.sessions[self.tokens[1]]["fighter"]]

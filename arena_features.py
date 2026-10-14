@@ -13,9 +13,14 @@ def make_worlds(seed):
     for index,(name,biome) in enumerate((("Sunstone Court","desert"),("Oak Ruins","forest"),("Winter Keep","snow"),("Tidewatch Fort","coast"),("Ember Basin","volcanic"))):
         world_seed=(seed+index*9176)%2**31;rng=random.Random(world_seed)
         props=[]
-        for i in range(14):
-            a=rng.random()*math.tau;r=rng.uniform(15,25)
-            props.append(dict(x=math.sin(a)*r,z=math.cos(a)*r,radius=rng.uniform(.65,1.2),height=rng.uniform(1.2,3.1),kind="pillar" if i%3==0 else "rock"))
+        count={"desert":18,"forest":24,"snow":16,"coast":20,"volcanic":22}[biome]
+        for i in range(count):
+            for attempt in range(100):
+                a=rng.random()*math.tau;r=rng.uniform(9,30);x,z=math.sin(a)*r,math.cos(a)*r
+                radius=rng.uniform(.65,1.2)
+                if all(math.hypot(x-p["x"],z-p["z"])>radius+p["radius"]+1.4 for p in props):break
+            kind="tree" if biome=="forest" and i%2==0 else "ruin" if biome in ("desert","snow") and i%4==0 else "pillar" if i%3==0 else "rock"
+            props.append(dict(x=x,z=z,radius=radius,height=rng.uniform(1.4,3.8) if kind!="tree" else rng.uniform(4,6),kind=kind))
         result.append(dict(id=index,name=name,biome=biome,seed=world_seed,radius=38,props=props))
     return result
 
@@ -71,7 +76,7 @@ class ArenaFeatures:
 
     def knock_down(self,f):
         if f["dead"]>0 or f["spawn_safe"]>0:return
-        f.update(fall=1.25,fall_duration=1.25,attack="",windup=0.,block=False,jump=0.)
+        f.update(fall=1.25,fall_duration=1.25,attack="",windup=0.,block=False,jump=0.,queued_attack="")
         self.emit("fall",target=f["id"])
 
     def collision_props(self,f):

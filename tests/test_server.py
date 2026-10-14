@@ -20,14 +20,15 @@ class ArenaTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def guest(self):
-        token = self.arena.request("/auth/guest",{})["token"]
+    def player(self):
+        name="Fighter"+str(len(self.arena.users))
+        token = self.arena.request("/auth/register",dict(username=name,email=name+"@example.com",password="test-passphrase"))["token"]
         pid = self.arena.request("/arena/join",{},token)["player"]
         return token,self.arena.fighters[pid]
 
     def pair(self):
-        token,a = self.guest()
-        _,b = self.guest()
+        token,a = self.player()
+        _,b = self.player()
         self.arena.fighters = {a["id"]:a,b["id"]:b}
         a.update(x=0,z=0,yaw=0,weapon="longsword",spawn_safe=0)
         b.update(x=0,z=2,yaw=math.pi,spawn_safe=0)
@@ -46,7 +47,7 @@ class ArenaTests(unittest.TestCase):
     def test_bots_fill_to_ten_and_depart_for_humans(self):
         self.assertEqual(len(self.arena.fighters),10)
         self.assertEqual({f["depth"] for f in self.arena.fighters.values()},{2,3,4,5})
-        for _ in range(12): self.guest()
+        for _ in range(12): self.player()
         self.assertEqual(len(self.arena.fighters),12)
         self.assertFalse(any(f["bot"] for f in self.arena.fighters.values()))
 
@@ -90,7 +91,7 @@ class ArenaTests(unittest.TestCase):
         self.assertEqual(a["weapon"],"fists")
 
     def test_client_cannot_teleport_or_forge_rewards(self):
-        token,f=self.guest();f.update(x=0,z=30);old_x=f["x"]
+        token,f=self.player();f.update(x=0,z=30);old_x=f["x"]
         self.arena.request("/arena/state",dict(move=[9999,9999],yaw=0,x=999,hp=999,coins=99999),token)
         self.arena.tick(.03)
         self.assertLess(abs(f["x"]-old_x),.2)
@@ -99,7 +100,7 @@ class ArenaTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.arena.request("/arena/state",dict(move=[float("nan"),0]),token)
 
     def test_stale_input_stops_movement(self):
-        token,f=self.guest()
+        token,f=self.player()
         f.update(x=0,z=30)
         self.arena.request("/arena/state",dict(move=[1,0]),token)
         self.arena.clock+=1
@@ -113,7 +114,7 @@ class ArenaTests(unittest.TestCase):
         for depth in (2,3,4,5):
             a["depth"]=depth
             choice=self.arena.plan_bot(a,b)
-            self.assertIn(choice,("advance","retreat","strafe_l","strafe_r","block","left","overhead","thrust","dodge"))
+            self.assertIn(choice,("advance","retreat","strafe_l","strafe_r","block","left","right","overhead","thrust","disarm","dodge"))
             choices.append(choice)
         self.assertEqual(len(choices),4)
 

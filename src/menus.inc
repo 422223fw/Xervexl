@@ -60,7 +60,7 @@
         for(int i=0;i<5;i++){float x=47+i*241;std::string id=i<static_cast<int>(slots.size())?slots[i].get<std::string>():"";if(button(x,110,225,48,"SLOT "+std::to_string(i+1),inventorySlot==i))inventorySlot=i;canvas.text(x+14,173,id.empty()?"EMPTY":item_info(id).value("name",id),1.45f,id==heldWeapon?GOLD:MUTED);}
         std::vector<json> owned;for(const auto& item:catalog)if(item.value("kind",std::string("weapon"))=="weapon"&&profile.contains("inventory")){for(const auto& id:profile["inventory"])if(id==item["id"]){owned.push_back(item);break;}}
         int pages=std::max(1,(static_cast<int>(owned.size())+7)/8);inventoryPage=std::min(inventoryPage,pages-1);
-        if(owned.empty())canvas.text(47,240,"ENTER THE ARENA OR SIGN IN. START WITH A KNIFE; PURCHASE MORE IN THE ARMOURY.",1.5f,WHITE);
+        if(owned.empty())canvas.text(47,240,"SIGN UP OR SIGN IN. START WITH A KNIFE; PURCHASE MORE IN THE ARMOURY.",1.5f,WHITE);
         for(int i=0;i<8;i++){int index=inventoryPage*8+i;if(index>=static_cast<int>(owned.size()))break;float x=47+(i%4)*301,y=218+(i/4)*217;std::string id=owned[index]["id"];
             canvas.rect(x,y,285,200,{.085f,.12f,.125f});weapon_icon(x+142,y+62,id,.64f);canvas.text(x+14,y+113,owned[index].value("name",id),1.6f,WHITE);
             if(button(x+14,y+149,257,36,"ASSIGN TO "+std::to_string(inventorySlot+1),true))net.queue("/inventory/assign",{{"slot",inventorySlot},{"item",id}});
@@ -91,9 +91,9 @@
         canvas.text(576,183,"RANK",1.4f,MUTED);canvas.text(711,183,"SKILL",1.4f,MUTED);canvas.text(855,183,"XP",1.4f,MUTED);canvas.text(1008,183,"CROWNS",1.4f,MUTED);canvas.text(1164,183,"KILLS",1.4f,MUTED);
         if(boards.contains(keys[leaderTab])){int i=0;for(const auto& row:boards[keys[leaderTab]]){float y=219+i*35;canvas.rect(47,y-5,1185,33,{.07f+(i%2)*.017f,.105f+(i%2)*.017f,.11f+(i%2)*.017f});Colour nameColour=i<3?GOLD:WHITE;
             canvas.text(58,y,std::to_string(i+1),1.6f,nameColour);canvas.text(99,y,row.value("username",std::string{}),1.6f,nameColour);canvas.text(455,y,row.value("bot",false)?"BOT":"PLAYER",1.4f,MUTED);
-            float x[]={581,716,855,1011,1168};for(int j=0;j<5;j++)canvas.text(x[j],y,std::to_string(row.value(keys[j==0?1:j==1?0:j],0)),1.5f,leaderTab==(j==0?1:j==1?0:j)?GOLD:WHITE);i++;
+            float x[]={581,716,855,1011,1168};for(int j=0;j<5;j++)canvas.text(x[j],y,compact_decimal(decimal_text(row,keys[j==0?1:j==1?0:j])),1.5f,leaderTab==(j==0?1:j==1?0:j)?GOLD:WHITE);i++;
         }}else canvas.text(48,242,busy?"LOADING LEADERBOARDS...":"CONNECT TO YOUR ARENA SERVER.",1.7f,WHITE);
-        canvas.text(48,672,"YOU: RANK "+std::to_string(level)+" / "+std::to_string(xp)+" XP / "+std::to_string(skill)+" SKILL / "+std::to_string(coins)+" CROWNS",1.6f,GOLD);
+        canvas.text(48,672,"YOU: RANK "+std::to_string(level)+" / "+compact_decimal(xp)+" XP / "+std::to_string(skill)+" SKILL / "+std::to_string(coins)+" CROWNS",1.6f,GOLD);
         canvas.text(48,718,"KILL: TARGET RANK IN SKILL. XP AND CROWNS ALSO SCALE WITH TARGET RANK.",1.4f,MUTED);
         canvas.text(48,752,"LOSING TO A LOWER RANK COSTS MORE SKILL. PERFECT PARRIES AND DISARMS EARN XP + SKILL.",1.3f,MUTED);
     }

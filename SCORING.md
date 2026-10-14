@@ -1,4 +1,4 @@
-# Xervexl 0.3.1 — progression and combat rules
+# Xervexl 0.4 — progression and combat rules
 
 Implemented on the authoritative server in `rules.py`, `combat.py`, `arena_features.py` and `server.py`. Clients cannot submit XP, skill, crowns, rank, upgrades or hit rewards. New accounts start at **rank 1, 0 XP, 0 skill points, 100 crowns and a knife**. Updating the game does not reset existing accounts.
 
@@ -13,16 +13,28 @@ Implemented on the authoritative server in `rules.py`, `combat.py`, `arena_featu
 
 If you die at rank V to a rank K opponent, the skill penalty is **2 × V + 4 × max(0, V − K)**. For a rank 10 victim, losing to rank 10 costs 20 skill; losing to rank 1 costs 56. Skill floors at zero; XP and earned rank are not taken away on death. The HUD reports actual skill lost, which can be below the nominal penalty when you have few skill points.
 
-Rank L begins at **75 × L × (L − 1) total XP**: rank 1 = 0, rank 2 = 150, rank 3 = 450, rank 4 = 900. Rank is separate from skill and spendable crowns. Bots receive shuffled AI depths 2–5 and randomized starting ranks, then gain XP and lose skill under the same combat rules. Bot progress lasts for their current server life; registered accounts persist across server restarts.
+Rank 2 requires **79 additional XP**. Every following rank costs the previous rank's cost multiplied by the new rank: 79, 237, 948, 4,740, 28,440, and so on. Rank is separate from skill and spendable crowns.
+
+| Rank reached | Additional XP from previous rank | Cumulative XP |
+|---|---:|---:|
+| 1 | 0 | 0 |
+| 2 | 79 | 79 |
+| 3 | 237 | 316 |
+| 4 | 948 | 1,264 |
+| 5 | 4,740 | 6,004 |
+| 6 | 28,440 | 34,444 |
+
+For rank L ≥ 2, the additional cost is **79 × L! / 2**. Total XP is the sum of the costs through that rank. There is no configured maximum rank. Authoritative XP uses arbitrary-precision integers; huge public values travel as decimal strings and the native interface displays them in compact scientific notation. Existing accounts receive a one-time, backed-up conversion from the former 75 × L × (L − 1) curve that preserves earned rank and proportional progress, instead of dropping their ranks when the formula changes. Credentials, equipment, coins and skill are preserved. Bots receive shuffled AI depths 2–5 and randomized starting ranks, then gain XP and lose skill under the same combat rules. Bot progress lasts for their current server life; registered accounts persist across server restarts.
 
 Every elimination immediately restores the living killer to **their full maximum health, including permanent health upgrades, and 100 stamina**. This applies to players and bots, including melee, ranged, magic, burning and reflected-arrow kills. Nonlethal hits do not restore either resource. A posthumous kill still earns its rewards but does not revive a dead shooter.
 
-Leaderboards cover skill, rank, XP, current crowns and eliminations. They include registered accounts on this server and active combatants, with BOT/PLAYER labels. They do not aggregate independent internet servers. Guests who have not entered the arena are not persistent leaderboard entries.
+Leaderboards cover skill, rank, XP, current crowns and eliminations. They include registered accounts on this server and active combatants, with BOT/PLAYER labels. They do not aggregate independent internet servers. Playing requires a registered account; the old guest endpoint is disabled.
 
 ## Combat
 
 - **Perfect parry:** face the attack tightly, match its direction and start/change guard within 180 ms of impact. It costs zero stamina, disarms the attacker regardless of their stamina, and awards both the parry and disarm rewards above. Match left cuts with right guard, right cuts with left guard, overheads with high guard, and thrusts with centre guard. Centre guard also covers horizontal cuts. Empty hands cannot parry. Holding an aligned guard absorbs melee damage with no stamina loss but no repeated XP reward. A mismatched guard provides only partial protection. Blocking cancels your ongoing attack immediately.
 - **Q disarm:** a deliberate windup costing 22 stamina. The victim must be exhausted (under 35 stamina) or recovering with their guard down. Failure awards nothing. Empty hands cannot be disarmed repeatedly.
+- **Cuts/thrust/spin:** left/right cuts cost 12 stamina and use an 180 ms windup, overhead costs 20 with 260 ms, direct thrust costs 12 with 180 ms. The optional R spinning cut costs 30, winds up for 360 ms and deals 82% weapon damage around the fighter. A hit occurs at the same timestamp used by the visible animation. Recovery must finish before the next attack; a click within the last 250 ms can queue the next move. Blocking clears queued and current attacks without refunding already-spent attack stamina.
 - **G drop / F pickup:** actual shared world weapons fall briefly and expire after 25 seconds. Picking up a borrowed weapon does not grant permanent ownership. Your purchased loadout returns after death. Being disarmed briefly staggers you before recovery.
 - **Z / X / C:** aim at legs, body or head. Damage multipliers are 0.68 / 1.0 / 1.45. Actual impact height also depends on jumping and projectile travel. Helmets protect head hits; armour protects other regions. Move and weapon damage also matter. Each direct damage event is capped at 75, so a fresh fighter with at least 100 health cannot be killed by a single direct hit.
 - **Bows, crossbows, slingshots:** server-simulated speed, gravity, travel time and swept collisions. Shields absorb some projectile damage. Facing an arrow with a timed blade parry or active weapon swing can reflect it toward its launch position. Ownership changes: subsequent damage and kill rewards belong to the defender. At most two reflections per projectile prevent endless ping-pong.
