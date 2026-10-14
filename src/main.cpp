@@ -1,6 +1,7 @@
 #include "render.hpp"
 #include "net.hpp"
 #include "scene.hpp"
+#include "controls.hpp"
 #include <windowsx.h>
 #include <mmsystem.h>
 #include <filesystem>
@@ -21,7 +22,10 @@ struct App {
     int shopCategory=0,shopPage=0,leaderTab=0,seenEvent=0;float lastBoards=-10;std::string aimZone="body",heldWeapon="knife",heldSpell;
     bool automatic=true,switchSmoke=false;int switchStep=0;std::vector<std::string> seenApis;
     bool smoke=false,smokeArena=false;std::string screenshot;
-    bool captureNext=false,authSubmitted=false,leftWasDown=false;std::string alignedPlayer;
+    bool captureNext=false,authSubmitted=false;std::string alignedPlayer;
+    CombatControls controls;
+    App(){try{std::ifstream file("data/controls.json");if(file){json saved;file>>saved;controls.easy=saved.value("easy",true);}}catch(const std::exception&) {}}
+    void control_mode(bool easy){controls.easy=easy;controls.leftWasDown=false;try{std::filesystem::create_directories("data");std::ofstream file("data/controls.json");file<<json{{"easy",easy}}.dump();if(!file)throw std::runtime_error("write");}catch(const std::exception&){toast("Controls changed. Could not save this setting.");}}
     bool authPlayRequested=false;int requestedWorld=-2;
     std::string previewMove;float previewPhase=.18f;
     bool signed_in(){return !profile.empty()&&!profile.value("guest",true);}
@@ -86,6 +90,7 @@ struct App {
             float current=self.value("hp",100.f);if(current<hp)damageUntil=time+.22f;hp=current;stamina=self.value("stamina",100.f);death=self.value("dead",0.f);
             spawnSafe=self.value("spawn_safe",0.f);
             maxHp=self.value("max_hp",100.f);heldWeapon=self.value("weapon",std::string("knife"));heldSpell=self.value("spell",std::string{});spellCd=self.value("spell_cd",0.f);
+            if(controls.easy)guardDir=self.value("guard_dir",std::string("centre"));
             if(death>0&&!wasDead)PlaySoundA("assets/fall.wav",nullptr,SND_FILENAME|SND_ASYNC|SND_NODEFAULT);
             wasDead=death>0;
         }
@@ -113,14 +118,11 @@ struct App {
         if(key('Z'))aimZone="legs";if(key('X'))aimZone="body";if(key('C'))aimZone="head";
         float forward=static_cast<float>(key('W'))-static_cast<float>(key('S'));
         float side=static_cast<float>(key('D'))-static_cast<float>(key('A'));
-        std::string attacks[]={"left","right","overhead","thrust"};
-        if(side<-.1f)attackMode=0;else if(side>.1f)attackMode=1;else if(forward>.1f)attackMode=2;else if(forward<-.1f)attackMode=3;
-        else if(key(VK_LBUTTON)&&!leftWasDown)attackMode=attackMode==0?1:0;
-        leftWasDown=key(VK_LBUTTON);
-        guardDir=side<-.1f?"left":side>.1f?"right":forward>.1f?"up":forward<-.1f?"centre":guardDir;
-        if(key(VK_RBUTTON)&&forward==0&&side==0&&(std::abs(mouseDX)>3||std::abs(mouseDY)>3))guardDir=std::abs(mouseDX)>std::abs(mouseDY)?(mouseDX<0?"left":"right"):(mouseDY<0?"up":"centre");
+        CombatKeys keys{forward,side,mouseDX,mouseDY,static_cast<bool>(key(VK_LBUTTON)),static_cast<bool>(key(VK_RBUTTON)),static_cast<bool>(key(VK_MBUTTON)),static_cast<bool>(key('V')),static_cast<bool>(key('Q')),static_cast<bool>(key('R'))};
+        std::string attack=controls.attack(keys);attackMode=controls.cut;
+        if(!controls.easy)guardDir=controls.guard;
         json input={{"move",{std::sin(yaw)*forward+std::cos(yaw)*side,std::cos(yaw)*forward-std::sin(yaw)*side}},
-                    {"yaw",yaw},{"attack",key('Q')?std::string("disarm"):key('R')?std::string("spin"):key(VK_MBUTTON)?std::string("thrust"):key(VK_LBUTTON)?attacks[attackMode]:std::string{}},{"block",key(VK_RBUTTON)},
+                    {"yaw",yaw},{"attack",attack},{"block",key(VK_RBUTTON)},{"easy_controls",controls.easy},
                     {"dodge",key(VK_SHIFT)},{"jump",key(VK_SPACE)},{"drop",key('G')},{"pickup",key('F')},{"cast",key('B')},
                     {"aim_zone",aimZone},{"aim_pitch",pitch-.28f},{"guard_dir",guardDir}};
         if(smokeArena){input["move"]={0,0};input["attack"]="";}
@@ -191,7 +193,7 @@ struct App {
         if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.4",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.5",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});
@@ -235,13 +237,16 @@ struct App {
         if(button(315,455,208,52,"AUTO",automatic))engine(true,true);
         if(button(535,455,208,52,"OPENGL",!automatic&&!vulkan))engine(false);
         if(button(755,455,210,52,"VULKAN",!automatic&&vulkan))engine(true);
-        canvas.text(315,548,"Both APIs are in this same executable.\nSwitch here while keeping your account and arena.\nAuto prefers Vulkan and falls back to OpenGL.\nUse HTTPS for internet servers.",1.45f,MUTED);
+        canvas.text(315,529,"COMBAT CONTROLS",1.6f,GOLD);
+        if(button(315,561,310,45,"EASY",controls.easy))control_mode(true);
+        if(button(639,561,326,45,"DIRECTIONAL",!controls.easy))control_mode(false);
+        canvas.text(315,628,controls.easy?"Hold left click for cuts. Right click selects a visible guard.\nYou still face the attack and time the block yourself.":"Walking selects cuts; WASD / mouse chooses guard direction.\nClick for each attack. V overhead / middle click thrust.",1.35f,MUTED);
     }
     void help(){
         panel("READ THE BLADE","AIM, PARRY, DISARM. EARN XP AND BUILD YOUR ARSENAL.");
-        std::vector<std::pair<std::string,std::string>> rows={{"W A S D / MOUSE","MOVE / LOOK / DIRECTIONAL COMBAT"},{"LEFT CLICK / RMB","CUT / BLOCK AND CANCEL ATTACK"},{"W / S / A / D","OVERHEAD / THRUST / LEFT / RIGHT CUT"},{"MIDDLE CLICK / R","DIRECT THRUST / CONTROLLED SPIN"},{"1 - 5 / I","CHANGE WEAPON / OWNED INVENTORY"},{"MOUSE WHEEL","OVERHEAD VIEW THROUGH FIRST PERSON"},{"Z X C / Q","AIM LEGS BODY HEAD / DISARM"},{"G F / SHIFT SPACE","DROP PICKUP / DODGE JUMP"},{"B","CAST PURCHASED SPELL"},{"E / T / ESC","ARMOURY / SCORES / MENU"}};
+        std::vector<std::pair<std::string,std::string>> rows={{"W A S D / MOUSE","MOVE / LOOK"},{"LEFT CLICK / RMB",controls.easy?"HOLD TO CUT / BLOCK AND CANCEL":"DIRECTIONAL CUT / MANUAL GUARD"},{"MIDDLE CLICK / V","THRUST / OVERHEAD CUT"},{"Q / R","DISARM / CONTROLLED SPIN"},{"1 - 5 / I","CHANGE WEAPON / OWNED INVENTORY"},{"MOUSE WHEEL","OVERHEAD VIEW THROUGH FIRST PERSON"},{"Z X C / B","AIM LEGS BODY HEAD / CAST SPELL"},{"G F / SHIFT SPACE","DROP PICKUP / DODGE JUMP"},{"E / T / ESC","ARMOURY / SCORES / MENU"},{"SETTINGS",controls.easy?"EASY CONTROLS / CHANGE TO DIRECTIONAL":"DIRECTIONAL CONTROLS / CHANGE TO EASY"}};
         float y=218;for(auto& row:rows){canvas.text(315,y,row.first,1.5f,GOLD);canvas.text(540,y,row.second,1.3f,WHITE);canvas.rect(315,y+23,650,1,{.17f,.23f,.22f});y+=39;}
-        canvas.text(315,605,"Face the incoming blade and match guard direction.\nTimed defence knocks its weapon away without stamina.\nFace an arrow and block at impact to return it.",1.4f,MUTED);
+        canvas.text(315,621,"Face the incoming blade; press block just before impact.\nHolding block does not repeatedly give a perfect parry.\nFace an arrow and block at impact to return it.",1.4f,MUTED);
     }
     void hud(){
         canvas.rect(22,20,440,67,{.035f,.055f,.058f,.89f});emblem(53,52,33);canvas.text(80,34,"XERVEXL",2.2f,GOLD);
@@ -257,7 +262,7 @@ struct App {
         json slots=profile.value("weapon_slots",json::array({"knife","","","",""}));
         for(int i=0;i<5;i++){float x=450+i*119;std::string id=i<static_cast<int>(slots.size())?slots[i].get<std::string>():"";bool active=id==heldWeapon&&!id.empty();canvas.rect(x,714,112,54,active?Colour{.38f,.28f,.16f,.94f}:Colour{.04f,.07f,.075f,.90f});canvas.border(x,714,112,54,active?GOLD:Colour{.20f,.27f,.25f});canvas.text(x+10,723,std::to_string(i+1),1.4f,GOLD);canvas.text(x+10,748,id.empty()?"EMPTY":id.substr(0,13),1.05f,WHITE);}
         auto info=item_info(heldWeapon);std::string weaponLabel=heldWeapon=="fists"?"BARE HANDS / F: RECOVER":info.value("name",heldWeapon);canvas.text(450,648,weaponLabel+" / AIM: "+aimZone+" [Z X C]",1.3f,GOLD);
-        const char* moveNames[]={"LEFT CUT","RIGHT CUT","OVERHEAD","THRUST"};canvas.text(450,677,std::string("MOVE: ")+moveNames[attackMode]+" / GUARD: "+guardDir+" / I INVENTORY",1.2f,MUTED);canvas.text(1100,709,"E ARMOURY\nT SCORES\nESC MENU",1.2f,MUTED);
+        const char* moveNames[]={"LEFT CUT","RIGHT CUT","OVERHEAD","THRUST"};canvas.text(450,677,controls.easy?"HOLD LMB: CUT / RMB: BLOCK / MMB: THRUST":std::string("MOVE: ")+moveNames[attackMode]+" / GUARD: "+guardDir,1.2f,MUTED);canvas.text(450,695,"V OVERHEAD / Q DISARM / R SPIN / I INVENTORY",1.05f,MUTED);canvas.text(1100,709,"E ARMOURY\nT SCORES\nESC MENU",1.2f,MUTED);
         if(!heldSpell.empty())canvas.text(450,622,"B: "+heldSpell+(spellCd>0?" / "+std::to_string(static_cast<int>(std::ceil(spellCd)))+"S":" / READY"),1.3f,{.46f,.74f,.92f});
         float progress=profile.value("xp_progress",0.f);canvas.rect(450,781,589,5,{.16f,.20f,.18f});canvas.rect(450,781,589*std::clamp(progress,0.f,1.f),5,GOLD);
         if(world.contains("events")){float y=106;for(auto& e:world["events"])if(e.value("kind",std::string{})=="kill"&&world.value("time",0.f)-e.value("time",0.f)<8){std::string label=e.value("source",std::string{})+"  /  "+e.value("target",std::string{});canvas.rect(961,y-7,296,26,{.04f,.06f,.06f,.72f});canvas.text(974,y,label,1.2f,MUTED);y+=32;}}

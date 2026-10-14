@@ -10,6 +10,7 @@ def angle(a): return (a+math.pi)%math.tau-math.pi
 
 class Combat:
     def emit(self,kind,**fields):
+        self.learning_event(kind,fields)
         self.event_serial += 1
         actor=next((self.fighters.get(fields.get(k)) for k in ("source_id","target_id","source","target") if self.fighters.get(fields.get(k))),None)
         fields.setdefault("world_id",actor["world_id"] if actor else self.default_world)
@@ -61,6 +62,8 @@ class Combat:
         if disarmer:
             self.grant(disarmer,xp=25+10*f["level"],skill=max(1,f["level"]//2),disarms=1)
             self.grant(f,skill=-(2+f["level"]))
+        ticket=f.get('attack_learning')
+        if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
         return True
 
     def pickup_weapon(self,f):
@@ -74,13 +77,16 @@ class Combat:
         self.emit("pickup",source=f["id"],weapon=chosen["weapon"])
         return True
 
-    def damage(self,attacker,victim,base,zone,kind="hit",magic="",pierce=0.):
+    def damage(self,attacker,victim,base,zone,kind="hit",magic="",pierce=0.,learning_ticket=None):
         if victim["dead"]>0 or victim["spawn_safe"]>0 or attacker["spawn_safe"]>0 or not self.same_world(attacker,victim):return
         armour=ITEMS.get(victim["armour"],{}).get("reduction",0)*(1-pierce)
         if zone=="head":armour=ITEMS.get(victim["helmet"],{}).get("reduction",0)
         amount=min(75.,base*BODY_MULTIPLIERS[zone]*(1-armour))
         absorbed=min(victim["ward"],amount);victim["ward"]-=absorbed;amount-=absorbed
+        actual=min(victim['hp'],amount)
         victim["hp"]=max(0.,victim["hp"]-amount)
+        ticket=learning_ticket if learning_ticket is not None else attacker.get('attack_learning') if kind=='hit' else None
+        self.learning_damage(attacker,victim,actual,ticket,blocked=base<=0 and victim['block'])
         if kind!="burn":self.balanced_hit(victim,amount,zone)
         if magic=="frost" and amount>0:victim["slow"]=2.5
         if magic=="lightning" and amount>0:
@@ -102,6 +108,12 @@ class Combat:
                       xp=reward["xp"],skill=reward["skill"],coins=reward["coins"],lost_skill=actual_loss)
 
     def strike(self,attacker):
+        ticket=attacker.get('attack_learning')
+        try:self.perform_strike(attacker)
+        finally:
+            if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
+
+    def perform_strike(self,attacker):
         if attacker["spawn_safe"]>0 or attacker["dead"]>0 or attacker["disarmed"]>0 or attacker["fall"]>0:return
         item=ITEMS[attacker["weapon"]]
         if item["family"]=="rope":self.fire_rope(attacker);return
@@ -145,12 +157,14 @@ class Combat:
         yaw=attacker["yaw"];pitch=attacker.get("aim_pitch",0.)
         speed=item.get("speed",20)
         height=TARGET_HEIGHTS[attacker.get("aim_zone","body")]
+        ticket=attacker.get('attack_learning') if not spell else None
+        if ticket and not ticket['done']:ticket['projectile']=True
         self.projectiles.append(dict(id="arrow-"+secrets.token_hex(4),owner=attacker["id"],weapon=attacker["weapon"],
             world_id=attacker["world_id"],origin_x=attacker["x"],origin_y=1.35+self.lift(attacker),origin_z=attacker["z"],
             kind=spell or item.get("family","bow"),magic="frost" if spell=="frostbolt" else "fire" if spell=="firebolt" else item.get("magic",""),
             x=attacker["x"]+math.sin(yaw)*.6,y=1.35+self.lift(attacker),z=attacker["z"]+math.cos(yaw)*.6,
             vx=math.sin(yaw)*speed,vz=math.cos(yaw)*speed,vy=(height-1.35)*2-pitch*speed*.15,
-            gravity=item.get("gravity",0),damage=item["damage"],age=0.,life=min(4.,item.get("reach",40)/speed),bounces=0))
+            gravity=item.get("gravity",0),damage=item["damage"],age=0.,life=min(4.,item.get("reach",40)/speed),bounces=0,_learning=ticket))
         self.emit("shoot",source=attacker["id"],weapon=attacker["weapon"])
 
     def cast_spell(self,f):
@@ -178,9 +192,13 @@ class Combat:
         for p in self.projectiles:
             old=(p["x"],p["y"],p["z"]);p["age"]+=dt;p["vy"]-=p["gravity"]*dt
             p["x"]+=p["vx"]*dt;p["y"]+=p["vy"]*dt;p["z"]+=p["vz"]*dt
-            if p["age"]>p["life"] or p["y"]<.05:continue
+            if p["age"]>p["life"] or p["y"]<.05:
+                self.learning.finish(p.get('_learning'),miss=True)
+                continue
             attacker=self.fighters.get(p["owner"])
-            if not attacker or attacker["world_id"]!=p["world_id"]:continue
+            if not attacker or attacker["world_id"]!=p["world_id"]:
+                self.learning.finish(p.get('_learning'),miss=True)
+                continue
             consumed=False
             for victim in self.fighters.values():
                 if victim["id"]==p["owner"] or victim["dead"]>0 or victim["spawn_safe"]>0 or victim["dodge"]>0 or victim["world_id"]!=p["world_id"]:continue
@@ -195,6 +213,9 @@ class Combat:
                 timed=victim["block"] and self.clock-victim["block_since"]<=.18
                 swinging=victim["windup"]>0 and victim["attack"]!="disarm"
                 if blade and facing and (timed or swinging) and p["bounces"]<2:
+                    self.learning_reward(p.get('_learning'),-10,True)
+                    self.learning.finish(p.get('_learning'))
+                    p['_learning']=None
                     self.parry_reward(victim,attacker,True)
                     speed=max(.001,math.hypot(p["vx"],p["vz"]))
                     dx,dy,dz=p.get("origin_x",attacker["x"])-cx,p.get("origin_y",1.35)-cy,p.get("origin_z",attacker["z"])-cz
@@ -205,7 +226,8 @@ class Combat:
                 base=p["damage"]
                 if victim["block"] and facing:
                     base*=1-ITEMS.get(victim["shield"],{}).get("reduction",.52)
-                self.damage(attacker,victim,base,zone_from_height(height),kind="projectile_hit",magic=p["magic"])
+                self.damage(attacker,victim,base,zone_from_height(height),kind="projectile_hit",magic=p["magic"],learning_ticket=p.get('_learning'))
+                self.learning.finish(p.get('_learning'),miss=True)
                 consumed=True;break
             if not consumed:alive.append(p)
         self.projectiles=alive

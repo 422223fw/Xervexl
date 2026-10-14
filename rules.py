@@ -3,7 +3,7 @@ import math
 import sys
 from functools import lru_cache
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 PROGRESSION_VERSION = 1
 # Authoritative XP can grow beyond the interpreter's default decimal digit limit.
 if hasattr(sys,"set_int_max_str_digits"):sys.set_int_max_str_digits(0)

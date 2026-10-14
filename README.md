@@ -12,16 +12,17 @@ The compiled game is `build/Xervexl.exe`. Auto mode prefers Vulkan and falls bac
 
 | Control | Action |
 |---|---|
-| W / A / S / D | Move; walking direction also selects the sword move |
+| W / A / S / D | Move freely; in optional Directional mode walking also selects the cut |
 | Mouse | Turn and look |
-| Left mouse button | Attack: A left cut, D right cut, W overhead, S thrust; standing clicks alternate left/right cuts |
+| Left mouse button | Easy mode: click for a cut or hold for alternating cuts; moving does not change the attack |
 | Middle mouse button | Direct thrust without needing to walk backward |
+| V | Direct overhead cut |
 | R | Deliberate spinning cut; longer commitment and 30 stamina |
 | 1 / 2 / 3 / 4 / 5 | Switch between owned quick-slot weapons |
 | I | Inventory: choose one of five slots and assign a purchased weapon |
 | Mouse wheel | Smooth zoom from bounded overhead view to first-person and back |
 | Right mouse button | Block; cancels your attack immediately, uses no stamina |
-| WASD / mouse while blocking | A left guard, D right guard, W high guard, S centre; mouse direction also selects |
+| WASD / mouse while blocking | Directional mode only: A left guard, D right guard, W high guard, S centre |
 | Right mouse just before impact | Face and match the incoming attack within 180 ms to disarm; XP + skill |
 | Z / X / C | Aim at legs / body / head |
 | Q | Disarm an exhausted or recovering opponent |
@@ -35,6 +36,8 @@ The compiled game is `build/Xervexl.exe`. Auto mode prefers Vulkan and falls bac
 | F12 | Save game-frame screenshot in `screenshots/capture.bmp` |
 
 Combat animations follow readable sword cuts, close guards and side steps observed in the supplied Saber Showdown trailer, using original human-shaped procedural geometry. Bent elbows and knees, fixed-length blades, limited arm reach, torso turns and a smooth return to guard replace the earlier rigid swings. Windup, impact and recovery use the authoritative server clock. A late attack click is buffered for up to 250 ms; blocking clears it and immediately cancels a swing. Overhead attacks cost more stamina and recover more slowly. Thrusts have extra reach and a narrow cone but lower damage. A spinning cut turns once, deals reduced damage around you and costs 30 stamina. The first-person camera does not force a full rotation.
+
+**Easy controls are the default.** Hold left click for alternating cuts with normal recovery and stamina costs; release to stop automatic follow-ups. Right click cancels an attack and blocks. While you face a nearby visible sword windup, the server selects its matching guard pose. It does not turn your camera or press block for you. You still need to look at the attacker and press block just before impact for a perfect parry. Changing the automatic guard while holding block does not reset the 180 ms timing window. Middle click thrusts, V cuts overhead, Q disarms and R spins. **Settings → Easy / Directional** switches controls and remembers the selection in private `data/controls.json`. Directional mode retains the previous movement-based cuts and manual guards.
 
 Your body and footsteps follow walking direction; attack and guard turn the body toward your aim. Facing an attack with the matching guard absorbs it without stamina loss. Counter a left cut with right guard, a right cut with left guard, and an overhead with high guard. A centred cross guard also covers horizontal cuts and thrusts. A correctly timed counter disarms even a full-stamina attacker. Holding guard does not repeatedly earn XP.
 
@@ -59,6 +62,10 @@ On each client, open Settings and enter `http://SERVER-LAN-IP:8765`. The host mu
 For internet play, deploy `server.py` on a host and terminate HTTPS with a reverse proxy. Point clients at its HTTPS URL. As requested, no public server has been deployed yet. There is no fake matchmaking or invented online player count.
 
 ## Accounts and JSON
+
+Bots also **learn from their actual battles**, including fights against each other when no humans are present. Shared, small action-value tables for each depth and weapon/range/guard/health/stamina situation correct the existing 2–5-step tactical forecast. Damage dealt, real blocks, parries, disarms and eliminations reward decisions; misses, damage received, lost weapons and deaths penalize them. Ranged outcomes remain attached to the original shot even after the shooter changes actions. Idle blocking earns no positive feedback. Occasional exploration chooses among close tactical alternatives. Recent results continue updating old habits, so bots can adapt when opponents change their tactics.
+
+The memory is saved every five seconds of server time and on clean shutdown in private **`data/bot_learning.json`**, and loaded on restart. Bots of the same depth/context share experience, including replacement bots and bots in other worlds. The file contains aggregate combat statistics without player names, account IDs or credentials. Storage is limited to 4,096 contexts; old contexts are replaced as new situations occur. Atomic checkpoints retry transient Windows locks; invalid memory is privately backed up before recovery. Test servers keep separate memories beside their own account files. This is online contextual action-value learning, not neural-network training or a guarantee that every successive battle is better. Reflex delays, planning depth, weapon damage and bot health do not increase through learning.
 
 The server automatically creates **`data/accounts.json`** when missing. It stores usernames, emails, salted PBKDF2-SHA256 password hashes, equipment and progress; passwords are never stored in plain text. Session tokens remain in server/client memory. Runtime data is excluded from Git, together with logs and local settings. `accounts.example.json` is an empty public template; `project.json` contains public project metadata.
 
@@ -105,4 +112,8 @@ See `THIRD_PARTY.md`. Art and short combat sounds are generated by the project. 
 
 ## הוראות קצרות
 
-לחצי פעמיים על **Play-Xervexl.cmd**, ואז **Sign up to play**. חייבים להירשם או להתחבר כדי לשחק. חשבון חדש מתחיל בדרגה 1, עם 0 נקודות מיומנות ו־100 מטבעות. לתנועה: WASD ועכבר; כיוון התנועה בוחר את מהלך התקיפה בלחיצה שמאלית. בעמידה החתכים מתחלפים בין שמאל וימין. לחיצה על גלגלת העכבר דוקרת, R מבצע חתך בסיבוב. לחיצה ימנית מבטלת התקפה וחוסמת בלי צריכת סיבולת. חסימה מתוזמנת בכיוון הנכון מפילה את חרב היריב או מחזירה חץ. 1–5 מחליפים נשקים, I פותח Inventory, וגלגלת העכבר עוברת ממבט מלמעלה לגוף ראשון. E פותח את החנות; Worlds בוחר עולם. דרגה 2 עולה 79 XP, דרגה 3 עוד 237, דרגה 4 עוד 948, וכך הלאה בהכפלה בדרגה הבאה. הכוחות והנשקים הקסומים נשארו לבחירתך. המשחק עובד מקומית עם בוטים; שרת ציבורי ושירות מייל עדיין אינם מוגדרים.
+לחצי פעמיים על **Play-Xervexl.cmd**, ואז **Sign up to play**. חייבים להירשם או להתחבר כדי לשחק. חשבון חדש מתחיל בדרגה 1, עם 0 נקודות מיומנות ו־100 מטבעות.
+
+מצב Easy מופעל כברירת מחדל: WASD לתנועה, העכבר למבט, מחזיקים קליק שמאלי לחיתוכים מתחלפים; קליק ימני מבטל התקפה וחוסם. צריך להסתכל לכיוון היריב וללחוץ בזמן כדי להפיל את החרב שלו. כיוון החסימה נבחר לפי התקפה גלויה; החזקת חסימה אינה נותנת שוב ושוב חסימה מושלמת. לחיצה על הגלגלת דוקרת, V מכה מלמעלה, Q פירוק נשק ו־R סיבוב. אפשר לחזור לשליטה לפי כיוון ההליכה דרך **Settings → Directional**. 1–5 מחליפים נשקים, I פותח Inventory, E חנות וגלגלת העכבר משנה זום עד גוף ראשון.
+
+הבוטים לומדים מתוצאות הקרבות שלהם נגד בוטים ושחקנים. הזיכרון נשמר בקובץ פרטי **data/bot_learning.json** ונטען מחדש בהפעלה הבאה. הם מתאימים בחירות לפי הצלחות וכישלונות; אין הבטחה שכל קרב יהיה טוב מקודמו. דרגה 2 עולה 79 XP, דרגה 3 עוד 237, דרגה 4 עוד 948, וכך הלאה בהכפלה בדרגה הבאה. הכוחות והנשקים הקסומים נשארו. המשחק עובד מקומית עם בוטים; שרת ציבורי ושירות מייל עדיין אינם מוגדרים.

@@ -1,6 +1,7 @@
 """Bounded 2-5 step combat forecasts with visible-threat tactical reactions."""
 import math
 from rules import ITEMS,RANGED,TARGET_HEIGHTS,MOVES
+from bot_learning import context, ATTACKS
 
 
 class BotBrain:
@@ -17,6 +18,7 @@ class BotBrain:
         actions=('advance','retreat','strafe_l','strafe_r','block','left','right','overhead','thrust','disarm','dodge')
         if ranged:actions=('advance','retreat','strafe_l','strafe_r','thrust','dodge')
         distance=math.hypot(opponent['x']-bot['x'],opponent['z']-bot['z'])
+        learning_key=context(bot,opponent)
         threat=opponent['windup']>0
         armour=ITEMS.get(opponent['armour'],{}).get('reduction',0)
         helmet=ITEMS.get(opponent['helmet'],{}).get('reduction',0)
@@ -73,10 +75,15 @@ class BotBrain:
                     if h<=0:score-=220
                     if e<=0:score+=160
                     if action=='advance':score+=.3*(.76**ply)
+                    if ply==0:score+=self.learning.bias(learning_key,action)
                     candidates.append((score,d,h,e,st,first or action,own_cd,enemy_cd,es))
             candidates.sort(reverse=True,key=lambda a:a[0]);beam=candidates[:10]
         bot['plan_nodes']=nodes
-        return beam[0][5] if beam else 'advance'
+        if not beam:return 'advance'
+        # Explore only nearby tactical choices, never arbitrary suicidal moves.
+        options=list(dict.fromkeys(b[5] for b in beam if b[0]>=beam[0][0]-6))
+        if len(options)>1 and self.rng.random()<.035:return self.rng.choice(options)
+        return beam[0][5]
 
     def steer_bot(self,f,move):
         mx,mz=move;length=math.hypot(mx,mz)
@@ -158,5 +165,7 @@ class BotBrain:
             item=ITEMS[f['weapon']];travel=max(.1,math.hypot(target['x']-f['x'],target['z']-f['z'])/item.get('speed',23))
             desired=(TARGET_HEIGHTS[zone]-1.35+.5*item.get('gravity',0)*travel*travel)/travel
             pitch=max(-.8,min(.8,((TARGET_HEIGHTS[zone]-1.35)*2-desired)/(item.get('speed',23)*.15)))
+        executed='block' if block else 'dodge' if dodge and f['stamina']>=24 else attack if attack else action if action not in ATTACKS else ''
+        self.learning_decision(f,executed,target)
         return dict(move=self.steer_bot(f,[mx,mz]),yaw=yaw,attack=attack,block=block,guard_dir=guard,dodge=dodge,jump=False,
                     aim_zone=zone,aim_pitch=pitch,cast=bool(f['spell']) and f['hp']<f['max_hp']*.45)

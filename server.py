@@ -25,6 +25,7 @@ from rules import (VERSION,WEAPONS,GEAR,CATALOG,ITEMS,RANGED,PERSISTENT,
 from combat import Combat
 from arena_features import ArenaFeatures
 from bot_brain import BotBrain
+from bot_learning import BotLearning, LearningCombat
 
 ROOT = Path(__file__).resolve().parent
 BOT_NAMES = ["Ash", "Bram", "Cinder", "Dusk", "Flint", "Gale", "Hawke", "Ivar", "Juno", "Kestrel", "Lark", "Morrow"]
@@ -47,7 +48,7 @@ def password_matches(password, stored):
     return hmac.compare_digest(password_hash(password, stored.split(":")[0]), stored)
 
 
-class Arena(ArenaFeatures,BotBrain,Combat):
+class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
     def __init__(self, data_path=None, seed=None):
         self.path = Path(data_path or ROOT / "data" / "accounts.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,6 +68,8 @@ class Arena(ArenaFeatures,BotBrain,Combat):
         self.drops = []
         self.projectiles = []
         self.clock = 0.
+        learning_name = 'bot_learning.json' if self.path.name == 'accounts.json' else self.path.stem+'.bot_learning.json'
+        self.learning = BotLearning(self.path.with_name(learning_name))
         self.running = True
         self.bot_serial = 0
         self.bot_depths = [2,3,4,5]
@@ -182,7 +185,8 @@ class Arena(ArenaFeatures,BotBrain,Combat):
     def request(self, route, body, token=""):
         with self.lock:
             if route == "/health":
-                return dict(ok=True,name="Xervexl",company="motlon",version=VERSION,account_required=True,mail_ready=bool(os.getenv("SMTP_HOST")),catalog=CATALOG,worlds=self.worlds)
+                return dict(ok=True,name="Xervexl",company="motlon",version=VERSION,account_required=True,mail_ready=bool(os.getenv("SMTP_HOST")),catalog=CATALOG,worlds=self.worlds,
+                            bot_learning=dict(updates=self.learning.updates,contexts=len(self.learning.values),checkpoint_ok=not self.learning.save_error))
             if route == "/auth/register":
                 name = str(body.get("username", "")).strip()
                 email = str(body.get("email", "")).strip().lower()
@@ -329,6 +333,7 @@ class Arena(ArenaFeatures,BotBrain,Combat):
                                       drop=bool(body.get("drop")),pickup=bool(body.get("pickup")),cast=bool(body.get("cast")),
                                       aim_zone=body.get("aim_zone") if body.get("aim_zone") in ("head","body","legs") else "body")
                     f["input"]["guard_dir"]=body.get("guard_dir") if body.get("guard_dir") in ("left","right","up","centre") else "centre"
+                    f["input"]["easy_controls"]=bool(body.get("easy_controls"))
                     try:
                         pitch=float(body.get("aim_pitch",0))
                         if not math.isfinite(pitch):raise ValueError()
@@ -342,7 +347,7 @@ class Arena(ArenaFeatures,BotBrain,Combat):
                     public.append({k:public_integer(a[k]) if k in ("xp","skill","coins","kills","deaths","level") else a[k] for k in ("id","name","bot","depth","x","z","yaw","hp","max_hp","stamina","weapon","shield","armour","helmet","spell","kills","deaths","block","jump","dodge","dead","attack","attack_id","windup","spawn_safe","level","xp","skill","coins","disarmed","spell_cd","ward","slow","cooldown","world_id","body_yaw","move_x","move_z","gait","guard_dir","attack_started","attack_windup","attack_duration","aim_zone","balance","fall","fall_duration")})
                 return dict(player=s["fighter"], time=self.clock, fighters=public, events=[e for e in self.events if e.get("world_id",room)==room][-12:],
                             profile=self.profile(user),humans=sum(not a["bot"] for a in public),bots=sum(a["bot"] for a in public),
-                            drops=[d for d in self.drops if d["world_id"]==room],projectiles=[p for p in self.projectiles if p["world_id"]==room],
+                            drops=[d for d in self.drops if d["world_id"]==room],projectiles=[{k:v for k,v in p.items() if not k.startswith('_')} for p in self.projectiles if p["world_id"]==room],
                             ropes=[r for r in self.ropes if r["world_id"]==room],world=self.worlds[room])
             raise ValueError("Unknown endpoint.")
 
@@ -404,11 +409,16 @@ class Arena(ArenaFeatures,BotBrain,Combat):
                 f["jump"] = max(0.,f["jump"]-dt)
                 was_blocking = f["block"]
                 old_guard=f["guard_dir"];f["guard_dir"]=inp.get("guard_dir","centre")
+                easy=not f['bot'] and inp.get('easy_controls',False)
+                if easy and inp.get('block'):f['guard_dir']=self.easy_guard(f)
                 f["block"] = bool(inp.get("block")) and f["disarmed"]<=0
                 if f["block"]:
                     f["queued_attack"]=""
-                    if f["windup"]>0 or f["attack"]:f["windup"]=0.;f["attack"]="";f["cooldown"]=min(f["cooldown"],.12)
-                    if not was_blocking or old_guard!=f["guard_dir"]:f["block_since"]=self.clock
+                    if f["windup"]>0 or f["attack"]:
+                        ticket=f.get('attack_learning')
+                        if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
+                        f["windup"]=0.;f["attack"]="";f["cooldown"]=min(f["cooldown"],.12)
+                    if not was_blocking or not easy and old_guard!=f["guard_dir"]:f["block_since"]=self.clock
                 if inp.get("dodge") and not f["last_dodge"] and f["stamina"] >= 24 and f["dodge"]<=0:
                     f["dodge"] = .32
                     f["stamina"] -= 24
@@ -435,8 +445,12 @@ class Arena(ArenaFeatures,BotBrain,Combat):
                     f["z"] *= 38/radius
                 f["stamina"] = min(100.,f["stamina"]+dt*(8 if f["block"] else 18))
                 pressed = inp.get("attack", "")
-                if pressed and not f["last_attack"] and not f["block"] and f["disarmed"]<=0:
+                if easy and not pressed and f.get('queued_repeat'):
+                    f['queued_attack']='';f['queued_repeat']=False
+                repeat=easy and pressed in ('left','right') and f['cooldown']<=.20
+                if pressed and (not f["last_attack"] or repeat) and not f["block"] and f["disarmed"]<=0:
                     f["queued_attack"]=pressed;f["queued_until"]=self.clock+.25
+                    f['queued_repeat']=bool(repeat and f['last_attack'])
                 if f["queued_until"]<self.clock:f["queued_attack"]=""
                 attack = f["queued_attack"]
                 ranged=ITEMS[f["weapon"]]["family"] in RANGED
@@ -445,6 +459,9 @@ class Arena(ArenaFeatures,BotBrain,Combat):
                 move=MOVES.get(attack,MOVES["left"])
                 cost = 18 if ITEMS[f["weapon"]]["family"]=="rope" else 10 if ranged else move["cost"]
                 if attack and f["cooldown"]<=0 and f["stamina"]>=cost and not f["block"] and f["disarmed"]<=0:
+                    if easy and attack in ('left','right') and not ranged:
+                        attack='right' if f.get('last_easy_cut')=='left' else 'left'
+                        f['last_easy_cut']=attack
                     f["attack"] = attack
                     f["attack_id"] += 1
                     f["windup"] = move["windup"]
@@ -452,6 +469,8 @@ class Arena(ArenaFeatures,BotBrain,Combat):
                     f["cooldown"] = max(f["attack_duration"]+.02,ITEMS[f["weapon"]]["cooldown"] + (0 if ranged else .18 if attack == "overhead" else -.05 if attack == "thrust" else 0))
                     f["stamina"] -= cost
                     f["queued_attack"]=""
+                    f['queued_repeat']=False
+                    self.learning_attack(f)
                 f["last_attack"] = bool(pressed)
                 if f["windup"] > 0:
                     f["windup"] = max(0.,f["attack_started"]+f["attack_windup"]-self.clock)
@@ -469,14 +488,31 @@ class Arena(ArenaFeatures,BotBrain,Combat):
                         push = (.78-dist)*.5
                         a["x"] -= dx/dist*push; a["z"] -= dz/dist*push
                         b["x"] += dx/dist*push; b["z"] += dz/dist*push
+            self.learning_tick()
+
+    def easy_guard(self,f):
+        """Choose only the guard pose; looking and pressing block stay manual."""
+        visible=[]
+        for a in self.fighters.values():
+            if a is f or a['dead']>0 or a['spawn_safe']>0 or not self.same_world(f,a) or a['windup']<=0:continue
+            if ITEMS[a['weapon']]['family'] in RANGED:continue
+            dx,dz=a['x']-f['x'],a['z']-f['z']
+            if math.hypot(dx,dz)>ITEMS[a['weapon']]['reach']+.5 or abs(wrap(math.atan2(dx,dz)-f['yaw']))>1.:continue
+            visible.append(a)
+        if not visible:return 'centre'
+        attack=min(visible,key=lambda a:a['windup'])['attack']
+        return {'left':'right','right':'left','overhead':'up'}.get(attack,'centre')
 
     def run(self):
         previous = time.monotonic()
-        while self.running:
-            current = time.monotonic()
-            self.tick(min(.1,current-previous))
-            previous = current
-            time.sleep(1/30)
+        try:
+            while self.running:
+                current = time.monotonic()
+                self.tick(min(.1,current-previous))
+                previous = current
+                time.sleep(1/30)
+        finally:
+            with self.lock:self.learning_close()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -543,6 +579,7 @@ def main():
     except KeyboardInterrupt: pass
     finally:
         Handler.arena.running = False
+        with Handler.arena.lock:Handler.arena.learning_close()
         server.server_close()
 
 
