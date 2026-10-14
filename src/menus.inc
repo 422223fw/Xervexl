@@ -70,16 +70,20 @@
         canvas.text(47,751,"OWNERSHIP IS SAVED. BORROWED ARENA WEAPONS ARE TEMPORARY AND CANNOT BE ASSIGNED.",1.4f,MUTED);
     }
     void worlds_view(){
-        canvas.rect(0,0,1280,800,{.025f,.041f,.044f,.98f});canvas.text(47,29,"CHOOSE YOUR WORLD",3.5f,GOLD);
-        canvas.text(47,77,"SHARED ARENAS, RANDOMIZED LANDMARKS, TEN COMBATANTS PER ACTIVE WORLD.",1.4f,MUTED);
+        canvas.rect(0,0,1280,800,{.025f,.041f,.044f,.98f});canvas.text(47,29,"CHOOSE YOUR SERVER",3.5f,GOLD);
+        canvas.text(47,77,"100 PLAYERS PER SERVER. FULL SERVERS OPEN ANOTHER INSTANCE AUTOMATICALLY.",1.35f,MUTED);
         if(button(1127,24,106,46,"BACK"))screen=Screen::Home;
-        for(size_t i=0;i<worlds.size();i++){const auto& w=worlds[i];float x=47+(i%3)*402,y=153+(i/3)*260;std::string biome=w.value("biome",std::string{});Colour tint=biome=="snow"?Colour{.66f,.77f,.82f}:biome=="forest"?Colour{.27f,.44f,.31f}:biome=="coast"?Colour{.31f,.57f,.64f}:biome=="volcanic"?Colour{.57f,.29f,.20f}:Colour{.64f,.51f,.33f};
+        int pages=std::max(1,(static_cast<int>(worlds.size())+5)/6);worldPage=std::clamp(worldPage,0,pages-1);
+        for(int i=0;i<6;i++){int index=worldPage*6+i;if(index>=static_cast<int>(worlds.size()))break;const auto& w=worlds[index];float x=47+(i%3)*402,y=153+(i/3)*260;std::string biome=w.value("biome",std::string{});Colour tint=biome=="snow"?Colour{.66f,.77f,.82f}:biome=="forest"?Colour{.27f,.44f,.31f}:biome=="coast"?Colour{.31f,.57f,.64f}:biome=="volcanic"?Colour{.57f,.29f,.20f}:Colour{.64f,.51f,.33f};
             canvas.rect(x,y,385,240,{.08f,.12f,.12f});canvas.rect(x,y,385,88,tint);canvas.triangle(x+20,y+88,x+114,y+19,x+188,y+88,tint*.55f);canvas.triangle(x+125,y+88,x+224,y+35,x+360,y+88,tint*.65f);
-            canvas.text(x+16,y+105,w.value("name",std::string{}),2.25f,WHITE);canvas.text(x+16,y+147,biome+" / SEEDED ARENA",1.4f,MUTED);
-            if(button(x+16,y+183,353,40,"ENTER WORLD",true))choose_room(w.value("id",0));
+            canvas.text(x+16,y+105,"SERVER "+std::to_string(w.value("server_number",w.value("id",0)+1))+" / "+std::to_string(w.value("humans",0))+" / 100 PLAYERS",1.4f,GOLD);
+            canvas.text(x+16,y+133,w.value("name",std::string{}),1.9f,WHITE);canvas.text(x+16,y+160,biome+" / "+std::to_string(w.value("bots",0))+" BOTS",1.25f,MUTED);
+            if(button(x+16,y+183,353,40,w.value("full",false)?"FULL / JOIN NEXT":"ENTER SERVER",true))choose_room(w.value("id",0));
         }
-        if(button(47,711,385,50,"RANDOM WORLD",true))choose_room();
-        canvas.text(461,725,"YOUR ACCOUNT, EQUIPMENT AND SCORES TRAVEL WITH YOU.",1.4f,MUTED);
+        if(button(47,711,385,50,"RANDOM SERVER",true))choose_room();
+        canvas.text(461,702,"PAGE "+std::to_string(worldPage+1)+" / "+std::to_string(pages)+" / "+std::to_string(worlds.size())+" SERVERS",1.35f,MUTED);
+        canvas.text(461,749,"PROGRESS AND EQUIPMENT FOLLOW YOU.",1.35f,MUTED);
+        if(button(931,711,139,38,"PREVIOUS")&&worldPage>0)worldPage--;if(button(1083,711,149,38,"NEXT")&&worldPage+1<pages)worldPage++;
     }
     void leaderboard_view(){
         canvas.rect(0,0,1280,800,{.025f,.041f,.044f,.98f});canvas.text(46,26,"ARENA LEADERBOARDS",3.5f,GOLD);

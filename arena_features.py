@@ -2,27 +2,32 @@
 import math
 import random
 import secrets
+from collections import Counter
 from rules import ITEMS,RANGED
+
+SERVER_CAPACITY=100
+WORLD_TYPES=(("Sunstone Court","desert"),("Oak Ruins","forest"),("Winter Keep","snow"),("Tidewatch Fort","coast"),("Ember Basin","volcanic"))
 
 
 def wrap_angle(a):return (a+math.pi)%math.tau-math.pi
 
 
+def make_world(identifier,template_id,world_seed,instance=1,overflow_of=None):
+    name,biome=WORLD_TYPES[template_id];rng=random.Random(world_seed);props=[]
+    count={"desert":18,"forest":24,"snow":16,"coast":20,"volcanic":22}[biome]
+    for i in range(count):
+        for attempt in range(100):
+            a=rng.random()*math.tau;r=rng.uniform(9,30);x,z=math.sin(a)*r,math.cos(a)*r
+            radius=rng.uniform(.65,1.2)
+            if all(math.hypot(x-p['x'],z-p['z'])>radius+p['radius']+1.4 for p in props):break
+        kind="tree" if biome=="forest" and i%2==0 else "ruin" if biome in ("desert","snow") and i%4==0 else "pillar" if i%3==0 else "rock"
+        props.append(dict(x=x,z=z,radius=radius,height=rng.uniform(1.4,3.8) if kind!="tree" else rng.uniform(4,6),kind=kind))
+    return dict(id=identifier,name=name,biome=biome,seed=world_seed,radius=38,props=props,
+                template_id=template_id,instance=instance,server_number=identifier+1,capacity=SERVER_CAPACITY,overflow_of=overflow_of)
+
+
 def make_worlds(seed):
-    result=[]
-    for index,(name,biome) in enumerate((("Sunstone Court","desert"),("Oak Ruins","forest"),("Winter Keep","snow"),("Tidewatch Fort","coast"),("Ember Basin","volcanic"))):
-        world_seed=(seed+index*9176)%2**31;rng=random.Random(world_seed)
-        props=[]
-        count={"desert":18,"forest":24,"snow":16,"coast":20,"volcanic":22}[biome]
-        for i in range(count):
-            for attempt in range(100):
-                a=rng.random()*math.tau;r=rng.uniform(9,30);x,z=math.sin(a)*r,math.cos(a)*r
-                radius=rng.uniform(.65,1.2)
-                if all(math.hypot(x-p["x"],z-p["z"])>radius+p["radius"]+1.4 for p in props):break
-            kind="tree" if biome=="forest" and i%2==0 else "ruin" if biome in ("desert","snow") and i%4==0 else "pillar" if i%3==0 else "rock"
-            props.append(dict(x=x,z=z,radius=radius,height=rng.uniform(1.4,3.8) if kind!="tree" else rng.uniform(4,6),kind=kind))
-        result.append(dict(id=index,name=name,biome=biome,seed=world_seed,radius=38,props=props))
-    return result
+    return [make_world(i,i,(seed+i*9176)%2**31) for i in range(len(WORLD_TYPES))]
 
 
 class ArenaFeatures:
@@ -33,10 +38,54 @@ class ArenaFeatures:
     def same_world(self,a,b):return a.get("world_id",0)==b.get("world_id",0)
     def world_for(self,f):return self.worlds[f.get("world_id",0)]
 
-    def choose_world(self,exclude=None):
-        humans=[f for f in self.fighters.values() if not f["bot"] and f["world_id"]!=exclude]
-        if humans and exclude is None:return max(set(f["world_id"] for f in humans),key=lambda w:sum(f["world_id"]==w for f in humans))
-        return self.rng.choice([w["id"] for w in self.worlds if w["id"]!=exclude])
+    def populations(self,ignore=()):
+        return Counter(f['world_id'] for f in self.fighters.values() if not f['bot'] and f['id'] not in ignore)
+
+    def world_info(self,world_id):
+        world=self.worlds[world_id];humans=self.populations()[world_id]
+        bots=sum(f['bot'] and f['world_id']==world_id for f in self.fighters.values())
+        return dict(world,humans=humans,bots=bots,full=humans>=SERVER_CAPACITY,available=max(0,SERVER_CAPACITY-humans))
+
+    def world_catalog(self):
+        humans=self.populations();bots=Counter(f['world_id'] for f in self.fighters.values() if f['bot'])
+        # Listing metadata stays small; geometry is sent only for the joined room.
+        return [dict({k:v for k,v in w.items() if k!='props'},humans=humans[w['id']],bots=bots[w['id']],
+                     full=humans[w['id']]>=SERVER_CAPACITY,available=max(0,SERVER_CAPACITY-humans[w['id']])) for w in self.worlds]
+
+    def create_world(self,source_id):
+        source=self.worlds[source_id];template=source['template_id']
+        instance=1+max(w['instance'] for w in self.worlds if w['template_id']==template)
+        used={w['seed'] for w in self.worlds};seed=self.rng.randrange(2**31)
+        while seed in used:seed=self.rng.randrange(2**31)
+        world=make_world(len(self.worlds),template,seed,instance,source_id)
+        self.worlds.append(world)
+        return world['id']
+
+    def ensure_spare(self,world_id):
+        counts=self.populations()
+        if counts[world_id]<SERVER_CAPACITY:return
+        template=self.worlds[world_id]['template_id']
+        if not any(w['template_id']==template and counts[w['id']]<SERVER_CAPACITY for w in self.worlds):
+            self.create_world(world_id)
+
+    def available_world(self,requested,ignore=()):
+        if type(requested) is not int or not 0<=requested<len(self.worlds):raise ValueError('Unknown server.')
+        counts=self.populations(ignore)
+        if counts[requested]<SERVER_CAPACITY:return requested
+        template=self.worlds[requested]['template_id']
+        candidates=[w['id'] for w in self.worlds if w['template_id']==template and counts[w['id']]<SERVER_CAPACITY]
+        return max(candidates,key=lambda w:(counts[w],-w)) if candidates else self.create_world(requested)
+
+    def choose_world(self,exclude=None,ignore=()):
+        counts=self.populations(ignore)
+        available=[w['id'] for w in self.worlds if w['id']!=exclude and counts[w['id']]<SERVER_CAPACITY]
+        if not available:return self.create_world(exclude if exclude is not None else self.default_world)
+        if exclude is None:
+            populated=[w for w in available if counts[w]>0]
+            if populated:return max(populated,key=lambda w:(counts[w],-w))
+            overflow=[w for w in available if self.worlds[w]['overflow_of'] is not None and counts[self.worlds[w]['overflow_of']]>=SERVER_CAPACITY]
+            if overflow:return min(overflow)
+        return self.rng.choice(available)
 
     def inventory_assign(self,s,slot,item):
         if not isinstance(slot,int) or not 0<=slot<5:raise ValueError("Choose a slot from 1 to 5.")

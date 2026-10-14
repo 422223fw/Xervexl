@@ -11,7 +11,7 @@ enum class Screen {Home,Auth,Shop,Settings,Help,Leaders,Inventory,Worlds};
 struct App {
     HWND window{};int width=1280,height=800;bool running=true,clicked=false,locked=false,vulkan=false;
     float mouseX=0,mouseY=0,yaw=0,pitch=.28f,time=0;int attackMode=0;
-    float cameraDistance=5.2f,cameraTarget=5.2f,mouseDX=0,mouseDY=0;std::string guardDir="centre";int inventoryPage=0,inventorySlot=0;
+    float cameraDistance=5.2f,cameraTarget=5.2f,mouseDX=0,mouseDY=0;std::string guardDir="centre";int inventoryPage=0,inventorySlot=0,worldPage=0;
     bool arena=false,pendingPlay=false,wasDead=false;Screen screen=Screen::Home;
     int authMode=0,focus=-1;std::string fields[5]={"", "", "", "", "http://127.0.0.1:8765"};
     std::string localMessage;float messageUntil=0,damageUntil=0,lastEventTime=-1;
@@ -19,7 +19,7 @@ struct App {
     std::map<std::string,Vec> positions;
     json world,profile,catalog,boards,worlds;std::string player,status,error,notice;bool connected=false,busy=false,savedLogin=false,restoringLogin=false;
     float hp=100,maxHp=100,stamina=100,death=0,spawnSafe=0,spellCd=0;int kills=0,coins=100,level=1,skill=0;std::string xp="0";
-    int shopCategory=0,shopPage=0,leaderTab=0,seenEvent=0;float lastBoards=-10;std::string aimZone="body",heldWeapon="knife",heldSpell;
+    int shopCategory=0,shopPage=0,leaderTab=0,seenEvent=0;float lastBoards=-10,lastWorlds=-10;std::string aimZone="body",heldWeapon="knife",heldSpell;
     bool automatic=true,switchSmoke=false;int switchStep=0;std::vector<std::string> seenApis;
     bool smoke=false,smokeArena=false;std::string screenshot;
     bool captureNext=false,authSubmitted=false;std::string alignedPlayer;
@@ -84,6 +84,7 @@ struct App {
         cameraDistance+=(cameraTarget-cameraDistance)*std::min(1.f,dt*12);
         if(!profile.empty()){coins=profile.value("coins",100);kills=profile.value("kills",0);level=profile.value("level",1);skill=profile.value("skill",0);xp=decimal_text(profile,"xp");maxHp=profile.value("max_hp",100.f);}
         if(screen==Screen::Leaders&&time-lastBoards>2&&!busy){net.queue("/leaderboards");lastBoards=time;}
+        if(screen==Screen::Worlds&&time-lastWorlds>2&&!busy){net.queue("/servers");lastWorlds=time;}
         if(switchSmoke&&time>1.1f*(switchStep+1)&&switchStep<3){engine(!vulkan);switchStep++;}
         json self;
         if(world.contains("fighters"))for(auto& f:world["fighters"]){
@@ -204,12 +205,12 @@ struct App {
         canvas.text(57,585,signed_in()?("HELLO, "+profile.value("username",std::string("FIGHTER"))):restoringLogin?"RECONNECTING TO YOUR SAVED ACCOUNT...":"CREATE YOUR ACCOUNT / ALREADY REGISTERED? SIGN IN",1.5f,signed_in()?GOLD:MUTED);
         canvas.rect(57,631,490,96,{.07f,.10f,.11f,.93f});canvas.border(57,631,490,96,{.19f,.25f,.25f});canvas.rect(57,631,3,96,GOLD);
         canvas.text(77,651,"A BLADE IS ALL YOU NEED",1.7f,GOLD);canvas.text(77,680,"Earn XP, skill and crowns. Build your arsenal.\nBlades, bows, armour and rare arcane weapons.",1.45f,WHITE);
-        canvas.rect(930,600,294,125,{.04f,.065f,.067f,.89f});canvas.text(951,619,"FIVE LIVING WORLDS",1.5f,GOLD);
+        canvas.rect(930,600,294,125,{.04f,.065f,.067f,.89f});canvas.text(951,619,"100 PLAYERS PER SERVER",1.5f,GOLD);
         canvas.text(951,650,world.value("world",json::object()).value("name",std::string("CHOOSE YOUR NEXT ARENA")),1.45f,WHITE);
         if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.6.1",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.7",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});
@@ -268,7 +269,7 @@ struct App {
         canvas.rect(22,20,440,67,{.035f,.055f,.058f,.89f});emblem(53,52,33);canvas.text(80,34,"XERVEXL",2.2f,GOLD);
         canvas.text(80,61,"RANK "+std::to_string(level)+" / "+std::to_string(skill)+" SKILL / "+compact_decimal(decimal_text(profile,"level_progress_xp"))+" / "+compact_decimal(decimal_text(profile,"level_cost_xp","79"))+" XP",1.15f,MUTED);
         canvas.rect(997,20,261,67,{.035f,.055f,.058f,.89f});
-        canvas.text(1013,35,std::to_string(world.value("humans",0))+" PLAYERS / "+std::to_string(world.value("bots",0))+" BOTS",1.4f,WHITE);canvas.text(1013,61,renderer->name(),1.15f,GOLD);
+        auto room=world.value("world",json::object());canvas.text(1013,35,"SERVER "+std::to_string(room.value("server_number",1))+" / "+std::to_string(world.value("humans",0))+" / 100",1.4f,WHITE);canvas.text(1013,61,std::string(renderer->name())+" / "+std::to_string(world.value("bots",0))+" BOTS",1.15f,GOLD);
         canvas.line(634,400,646,400,1.3f,{1,1,1,.6f});canvas.line(640,394,640,406,1.3f,{1,1,1,.6f});
         if(spawnSafe>0){canvas.rect(443,145,394,44,{.035f,.055f,.058f,.89f});canvas.text(463,158,"SAFE ENTRY / DAMAGE STARTS SHORTLY",1.55f,GOLD);}
         auto pickup=world.value("pickup",json::object());

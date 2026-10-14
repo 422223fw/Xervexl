@@ -23,7 +23,7 @@ from rules import (VERSION,WEAPONS,GEAR,CATALOG,ITEMS,RANGED,PERSISTENT,
                    complete_account,level_for_xp,xp_for_level,health_price,stability_price,
                    PROGRESSION_VERSION,migrate_progression,public_integer,MOVES)
 from combat import Combat
-from arena_features import ArenaFeatures
+from arena_features import ArenaFeatures, SERVER_CAPACITY
 from bot_brain import BotBrain
 from bot_learning import BotLearning, LearningCombat
 from session_store import SessionStore
@@ -178,32 +178,49 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
         if s["guest"] or not user.get("password") or self.users.get(user["username"].lower()) is not user:
             raise ValueError("Sign up or sign in with a registered account to play.")
 
-    def join(self, s,world_id=None):
+    def join(self,s,world_id=None,change_world=False):
+        # Public HTTP handlers and direct joins use the same atomic allocation.
+        with self.lock:return self.join_locked(s,world_id,change_world)
+
+    def join_locked(self, s,world_id=None,change_world=False):
         self.require_account(s)
-        if s["fighter"] in self.fighters:
+        current=self.fighters.get(s['fighter'])
+        if current and not change_world:
+            self.ensure_spare(current['world_id'])
             return s["fighter"]
+        if world_id is not None and (type(world_id) is not int or not 0<=world_id<len(self.worlds)):
+            raise ValueError('Unknown server.')
+        owned={other['fighter'] for other in self.sessions.values() if other['user'] is s['user']}
+        desired=world_id if world_id is not None else self.choose_world(current['world_id'] if change_world and current else None,owned)
+        chosen=self.available_world(desired,owned)
+        if current and current['world_id']==chosen:
+            self.ensure_spare(chosen)
+            return current['id']
         # One combatant per registered account, even across multiple sessions.
         if not s["guest"]:
             for other in self.sessions.values():
-                if other is not s and other["user"] is s["user"] and other["fighter"] in self.fighters:
+                if other["user"] is s["user"] and other["fighter"] in self.fighters:
                     self.fighters.pop(other["fighter"], None)
                     other["fighter"] = ""
         pid = "p-" + secrets.token_hex(5)
         f = self.spawn(pid, s["user"]["username"])
-        f["world_id"]=self.choose_world() if world_id is None else world_id
+        f["world_id"]=chosen
         for k in ("weapon","shield","armour","helmet","spell",*PERSISTENT):
             f[k] = s["user"][k]
         f.update(loadout_weapon=f["weapon"],level=level_for_xp(f["xp"]),max_hp=100+20*f["health_upgrades"])
         f["hp"]=f["max_hp"]
         s["fighter"] = pid
         self.maintain_bots()
+        self.ensure_spare(chosen)
         return pid
 
     def request(self, route, body, token=""):
         with self.lock:
             if route == "/health":
-                return dict(ok=True,name="Xervexl",company="motlon",version=VERSION,account_required=True,mail_ready=bool(os.getenv("SMTP_HOST")),catalog=CATALOG,worlds=self.worlds,
+                return dict(ok=True,name="Xervexl",company="motlon",version=VERSION,account_required=True,mail_ready=bool(os.getenv("SMTP_HOST")),catalog=CATALOG,worlds=self.world_catalog(),server_capacity=SERVER_CAPACITY,
                             bot_learning=dict(updates=self.learning.updates,contexts=len(self.learning.values),checkpoint_ok=not self.learning.save_error))
+            if route=='/servers':
+                return dict(worlds=self.world_catalog(),server_capacity=SERVER_CAPACITY)
             if route == "/auth/register":
                 name = str(body.get("username", "")).strip()
                 email = str(body.get("email", "")).strip().lower()
@@ -273,16 +290,17 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
             user = s["user"]
             self.require_account(s)
             if route=='/auth/resume':
-                return dict(authenticated=True,profile=self.profile(user),catalog=CATALOG,worlds=self.worlds)
+                return dict(authenticated=True,profile=self.profile(user),catalog=CATALOG,worlds=self.world_catalog())
             if route=="/inventory/assign":return self.inventory_assign(s,body.get("slot"),str(body.get("item","")))
             if route=="/inventory/switch":return self.inventory_switch(s,body.get("slot"))
             if route=="/arena/world":
-                current=self.fighters.get(s["fighter"]);previous=current["world_id"] if current else None
-                chosen=body.get("world_id",self.choose_world(previous))
-                if not isinstance(chosen,int) or not 0<=chosen<len(self.worlds):raise ValueError("Unknown world.")
-                self.fighters.pop(s["fighter"],None);s["fighter"]=""
-                pid=self.join(s,chosen)
-                return dict(player=pid,profile=self.profile(user),world=self.worlds[chosen])
+                chosen=body.get('world_id')
+                if 'world_id' in body and (type(chosen) is not int or not 0<=chosen<len(self.worlds)):raise ValueError('Unknown server.')
+                pid=self.join(s,chosen,change_world=True);actual=self.fighters[pid]['world_id']
+                result=dict(player=pid,profile=self.profile(user),world=self.world_info(actual),worlds=self.world_catalog())
+                if chosen is not None and actual!=chosen:
+                    result['message']=f'Server {chosen+1} is full. Joined server {actual+1} with an available place.'
+                return result
             if route == "/me":
                 return dict(profile=self.profile(user), catalog=CATALOG)
             if route == "/leaderboards":
@@ -332,7 +350,8 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                     self.save()
                 return dict(profile=self.profile(user))
             if route == "/arena/join":
-                return dict(player=self.join(s), profile=self.profile(user))
+                pid=self.join(s)
+                return dict(player=pid,profile=self.profile(user),world=self.world_info(self.fighters[pid]['world_id']),worlds=self.world_catalog())
             if route == "/arena/leave":
                 self.fighters.pop(s["fighter"], None)
                 s["fighter"] = ""
@@ -374,7 +393,7 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                             pickup=self.pickup_hint(f) if f else {},
                             profile=self.profile(user),humans=sum(not a["bot"] for a in public),bots=sum(a["bot"] for a in public),
                             drops=[d for d in self.drops if d["world_id"]==room],projectiles=[{k:v for k,v in p.items() if not k.startswith('_')} for p in self.projectiles if p["world_id"]==room],
-                            ropes=[r for r in self.ropes if r["world_id"]==room],world=self.worlds[room])
+                            ropes=[r for r in self.ropes if r["world_id"]==room],world=self.world_info(room))
             raise ValueError("Unknown endpoint.")
 
     def send_reset(self, email, code):
@@ -507,15 +526,17 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
             alive = [f for f in self.fighters.values() if f["dead"]<=0]
             self.tick_objects(dt)
             self.tick_ropes(dt)
-            for i,a in enumerate(alive):
-                for b in alive[i+1:]:
-                    if not self.same_world(a,b):continue
-                    dx,dz = b["x"]-a["x"],b["z"]-a["z"]
-                    dist = math.hypot(dx,dz)
-                    if .001 < dist < .78:
-                        push = (.78-dist)*.5
-                        a["x"] -= dx/dist*push; a["z"] -= dz/dist*push
-                        b["x"] += dx/dist*push; b["z"] += dz/dist*push
+            rooms={}
+            for f in alive:rooms.setdefault(f['world_id'],[]).append(f)
+            for fighters in rooms.values():
+                for i,a in enumerate(fighters):
+                    for b in fighters[i+1:]:
+                        dx,dz = b["x"]-a["x"],b["z"]-a["z"]
+                        dist = math.hypot(dx,dz)
+                        if .001 < dist < .78:
+                            push = (.78-dist)*.5
+                            a["x"] -= dx/dist*push; a["z"] -= dz/dist*push
+                            b["x"] += dx/dist*push; b["z"] += dz/dist*push
             self.learning_tick()
 
     def easy_guard(self,f):
