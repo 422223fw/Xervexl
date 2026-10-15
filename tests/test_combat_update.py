@@ -170,16 +170,16 @@ class MoveTimingTests(unittest.TestCase):
 
     def test_impact_occurs_at_the_reported_animation_contact_time(self):
         self.input(attack='left');self.arena.tick(.03)
-        self.assertEqual(self.a['attack_windup'],.18)
-        self.arena.tick(.14);self.assertEqual(self.b['hp'],100)
+        self.assertEqual(self.a['attack_windup'],.24)
+        self.arena.tick(.20);self.assertEqual(self.b['hp'],100)
         self.arena.tick(.05);self.assertLess(self.b['hp'],100)
 
     def test_late_click_buffers_the_next_cut_and_block_clears_it(self):
         self.input(attack='left');self.arena.tick(.03)
-        self.input();self.arena.tick(.20)
+        self.input();self.arena.tick(.45)
         self.input(attack='right');self.arena.tick(.04)
         self.assertEqual(self.a['queued_attack'],'right')
-        self.input();self.arena.tick(.23);self.arena.tick(.015)
+        self.input();self.arena.tick(.13);self.arena.tick(.015)
         self.assertEqual((self.a['attack_id'],self.a['attack']),(2,'right'))
         self.input(attack='left');self.arena.tick(.02)
         self.input(block=True);self.arena.tick(.02)
@@ -188,7 +188,7 @@ class MoveTimingTests(unittest.TestCase):
     def test_deliberate_spin_costs_more_and_can_hit_behind_the_fighter(self):
         self.b['z']=-1.3;self.input(attack='spin');self.arena.tick(.03)
         self.assertEqual(self.a['stamina'],70)
-        self.arena.tick(.4)
+        self.arena.tick(.50)
         self.assertLess(self.b['hp'],100)
 
     def test_ranged_weapon_cannot_fire_a_spinning_cut(self):

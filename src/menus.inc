@@ -19,8 +19,8 @@
         if(button(678,24,236,46,"INVENTORY [I]"))screen=Screen::Inventory;
         canvas.text(47,77,"PURCHASE EQUIPMENT, ASSIGN QUICK-SLOTS, BUILD YOUR LOADOUT",1.45f,MUTED);
         canvas.text(936,38,std::to_string(coins)+" CROWNS",1.9f,GOLD);if(button(1127,24,106,46,"BACK"))screen=Screen::Home;
-        const char* categories[]={"MELEE","RANGED","ARMOUR & SHIELDS","ARCANE","UPGRADES"};
-        for(int i=0;i<5;i++)if(button(47+i*241,110,225,45,categories[i],shopCategory==i)){shopCategory=i;shopPage=0;}
+        const char* categories[]={"MELEE","RANGED","ARMOUR","ARCANE","UPGRADES","MODES"};
+        for(int i=0;i<6;i++)if(button(47+i*201,110,187,45,categories[i],shopCategory==i)){if(i==5){screen=Screen::Modes;return;}shopCategory=i;shopPage=0;}
         std::vector<json> items;
         for(const auto& item:catalog){std::string kind=item.value("kind",std::string("weapon")),family=item.value("family",std::string{});bool ranged=family=="bow"||family=="crossbow"||family=="slingshot"||family=="staff";bool magic=item.contains("magic")||kind=="spell";
             if((shopCategory==0&&kind=="weapon"&&!ranged&&!magic)||(shopCategory==1&&ranged&&!magic)||(shopCategory==2&&(kind=="armour"||kind=="shield"||kind=="helmet"))||(shopCategory==3&&magic)||(shopCategory==4&&kind=="upgrade"))items.push_back(item);
@@ -50,7 +50,7 @@
         canvas.text(47,704,"PAGE "+std::to_string(shopPage+1)+" / "+std::to_string(pages),1.4f,MUTED);
         if(button(931,697,139,38,"PREVIOUS")&&shopPage>0)shopPage--;
         if(button(1083,697,149,38,"NEXT")&&shopPage+1<pages)shopPage++;
-        canvas.text(47,755,shopCategory==4?"PERMANENT HEALTH AND FOOTING. LATER UPGRADES COST MORE. BLOCKING DOES NOT DRAIN STAMINA.":"NUMBERS 1-5 CHANGE QUICK-SLOT WEAPONS. MOVEMENT AND MOUSE DIRECTION CONTROL SWORD MOVES.",1.3f,MUTED);
+        canvas.text(47,755,shopCategory==4?"PERMANENT HEALTH AND FOOTING. LATER UPGRADES COST MORE. BLOCKING DOES NOT DRAIN STAMINA.":"1-5 SWITCH WEAPONS. HOLD LEFT CLICK TO CUT / MIDDLE CLICK TO THRUST / RIGHT CLICK TO GUARD.",1.3f,MUTED);
     }
     void inventory_view(){
         canvas.rect(0,0,1280,800,{.025f,.041f,.044f,.98f});canvas.text(47,29,"YOUR INVENTORY",3.5f,GOLD);

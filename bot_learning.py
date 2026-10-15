@@ -127,7 +127,7 @@ class BotLearning:
 class LearningCombat:
     def learning_context(self, f):
         enemies = [a for a in self.fighters.values() if a is not f and a['dead'] <= 0
-                   and a['spawn_safe'] <= 0 and self.same_world(f, a)]
+                   and a['spawn_safe'] <= 0 and self.can_fight(f, a)]
         return context(f, self.target_for(f, enemies)) if enemies else None
 
     def learning_decision(self, f, action, opponent):

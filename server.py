@@ -27,6 +27,7 @@ from arena_features import ArenaFeatures, SERVER_CAPACITY
 from bot_brain import BotBrain
 from bot_learning import BotLearning, LearningCombat
 from session_store import SessionStore
+from game_modes import GameModes
 
 ROOT = Path(__file__).resolve().parent
 BOT_NAMES = ["Ash", "Bram", "Cinder", "Dusk", "Flint", "Gale", "Hawke", "Ivar", "Juno", "Kestrel", "Lark", "Morrow"]
@@ -53,7 +54,7 @@ class AuthenticationError(ValueError):
     pass
 
 
-class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
+class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
     def __init__(self, data_path=None, seed=None):
         self.path = Path(data_path or ROOT / "data" / "accounts.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,6 +83,7 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
         self.bot_depths = [2,3,4,5]
         self.rng.shuffle(self.bot_depths)
         self.setup_worlds(seed)
+        self.setup_modes()
         self.maintain_bots()
 
     def save(self):
@@ -146,9 +148,11 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
         return f
 
     def maintain_bots(self):
-        active={f["world_id"] for f in self.fighters.values() if not f["bot"]} or {self.default_world}
+        human_rooms={f['world_id'] for f in self.fighters.values() if not f['bot']}
+        active={r for r in human_rooms if not self.worlds[r].get('mode_id')}
+        if not human_rooms:active={self.default_world}
         for f in list(self.fighters.values()):
-            if f["bot"] and f["world_id"] not in active:del self.fighters[f["id"]]
+            if f["bot"] and f["world_id"] not in active and not self.worlds[f['world_id']].get('mode_id'):del self.fighters[f["id"]]
         for world_id in active:
             humans=sum(not f["bot"] and f["world_id"]==world_id for f in self.fighters.values())
             wanted=max(0,10-humans);bots=[f for f in self.fighters.values() if f["bot"] and f["world_id"]==world_id]
@@ -221,6 +225,7 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                             bot_learning=dict(updates=self.learning.updates,contexts=len(self.learning.values),checkpoint_ok=not self.learning.save_error))
             if route=='/servers':
                 return dict(worlds=self.world_catalog(),server_capacity=SERVER_CAPACITY)
+            if route=='/modes':return dict(modes=self.mode_catalog())
             if route == "/auth/register":
                 name = str(body.get("username", "")).strip()
                 email = str(body.get("email", "")).strip().lower()
@@ -289,6 +294,12 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
             s = self.authenticate(token)
             user = s["user"]
             self.require_account(s)
+            if route=='/workshop/save':return self.save_blueprint(s,body)
+            if route=='/workshop/load':
+                blueprint=self.blueprints.get(body.get('id'))
+                if not blueprint:raise ValueError('Unknown workshop world.')
+                return dict(blueprint=blueprint,blueprint_id=body['id'])
+            if route=='/modes/join':return self.join_mode(s,str(body.get('mode','')),body.get('biome'))
             if route=='/auth/resume':
                 return dict(authenticated=True,profile=self.profile(user),catalog=CATALOG,worlds=self.world_catalog())
             if route=="/inventory/assign":return self.inventory_assign(s,body.get("slot"),str(body.get("item","")))
@@ -296,6 +307,7 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
             if route=="/arena/world":
                 chosen=body.get('world_id')
                 if 'world_id' in body and (type(chosen) is not int or not 0<=chosen<len(self.worlds)):raise ValueError('Unknown server.')
+                if chosen is not None and self.worlds[chosen].get('mode_id'):return self.join_mode(s,self.worlds[chosen]['mode_id'])
                 pid=self.join(s,chosen,change_world=True);actual=self.fighters[pid]['world_id']
                 result=dict(player=pid,profile=self.profile(user),world=self.world_info(actual),worlds=self.world_catalog())
                 if chosen is not None and actual!=chosen:
@@ -374,7 +386,7 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                     f["input"] = dict(move=[clamp(mx,-1,1), clamp(mz,-1,1)], yaw=wrap(yaw),
                                       attack=body.get("attack", "") if isinstance(body.get("attack", ""),str) and body.get("attack", "") in MOVES else "",
                                       block=bool(body.get("block")),dodge=bool(body.get("dodge")),jump=bool(body.get("jump")),
-                                      drop=bool(body.get("drop")),pickup=bool(body.get("pickup")),cast=bool(body.get("cast")),
+                                      drop=bool(body.get("drop")),pickup=bool(body.get("pickup")),cast=bool(body.get("cast")),revive=bool(body.get('revive')),
                                       aim_zone=body.get("aim_zone") if body.get("aim_zone") in ("head","body","legs") else "body")
                     f["input"]["guard_dir"]=body.get("guard_dir") if body.get("guard_dir") in ("left","right","up","centre") else "centre"
                     f["input"]["easy_controls"]=bool(body.get("easy_controls"))
@@ -389,8 +401,9 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                 for a in self.fighters.values():
                     if a["world_id"]!=room:continue
                     public.append({k:public_integer(a[k]) if k in ("xp","skill","coins","kills","deaths","level") else a[k] for k in ("id","name","bot","depth","x","z","yaw","hp","max_hp","stamina","weapon","shield","armour","helmet","spell","kills","deaths","block","jump","dodge","dead","attack","attack_id","windup","spawn_safe","level","xp","skill","coins","disarmed","spell_cd","ward","slow","cooldown","world_id","body_yaw","move_x","move_z","gait","guard_dir","attack_started","attack_windup","attack_duration","aim_zone","balance","fall","fall_duration")})
+                    public[-1].update(team=a.get('team',-1),downed=a.get('downed',0.),eliminated=bool(a.get('eliminated',False)),revive_progress=a.get('revive_progress',0.),match_score=a.get('match_score',0),match_xp=a.get('match_xp',0),match_coins=a.get('match_coins',0))
                 return dict(player=s["fighter"], time=self.clock, fighters=public, events=[e for e in self.events if e.get("world_id",room)==room][-12:],
-                            pickup=self.pickup_hint(f) if f else {},
+                            pickup=self.pickup_hint(f) if f else {},revive=self.revive_hint(f),match=self.match_state(room),
                             profile=self.profile(user),humans=sum(not a["bot"] for a in public),bots=sum(a["bot"] for a in public),
                             drops=[d for d in self.drops if d["world_id"]==room],projectiles=[{k:v for k,v in p.items() if not k.startswith('_')} for p in self.projectiles if p["world_id"]==room],
                             ropes=[r for r in self.ropes if r["world_id"]==room],world=self.world_info(room))
@@ -420,7 +433,10 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                     self.fighters.pop(s["fighter"],None)
                     del self.sessions[token]
             self.maintain_bots()
+            self._planning_slots={f['id'] for f in sorted((a for a in self.fighters.values() if a['bot']),key=lambda a:a['plan_at'])[:12]} if len(self.fighters)>40 else None
+            self.prepare_bot_frame()
             for f in list(self.fighters.values()):
+                if f.get('eliminated'):continue
                 if f["dead"] > 0:
                     f["dead"] -= dt
                     if f["dead"] <= 0:
@@ -428,9 +444,14 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                         angle = self.rng.random()*math.tau
                         f.update(x=math.sin(angle)*18,z=math.cos(angle)*18,hp=f["max_hp"],stamina=100.,cooldown=0.,windup=0.,attack="",block=False,spawn_safe=1.5,
                                  weapon=f["loadout_weapon"],disarmed=0.,ward=0.,slow=0.,burn=0.,last_attack=False,fall=0.,balance=100.,queued_attack="")
+                        if self.match_for(f):self.place_squad(f)
                     continue
                 if f["bot"]: inp = self.bot_input(f)
                 else: inp = f["input"] if self.clock-f["last_input"] < .5 else {}
+                f['mode_input']=inp
+                match=self.match_for(f)
+                if match and match['phase']!='playing' or f.get('downed',0)>0:
+                    f.update(move_x=0.,move_z=0.,attack='',windup=0.,block=False);continue
                 if f["burn"]>0:
                     f["burn"]=max(0.,f["burn"]-dt);f["burn_tick"]+=dt
                     if f["burn_tick"]>=.5:
@@ -501,7 +522,7 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                 if f["queued_until"]<self.clock:f["queued_attack"]=""
                 attack = f["queued_attack"]
                 ranged=ITEMS[f["weapon"]]["family"] in RANGED
-                if attack=="spin" and (ranged or ITEMS[f["weapon"]]["family"]=="rope"):
+                if attack in ('spin','reverse_spin','rising','pommel','feint') and (ranged or ITEMS[f["weapon"]]["family"]=="rope"):
                     attack="";f["queued_attack"]=""
                 move=MOVES.get(attack,MOVES["left"])
                 cost = 18 if ITEMS[f["weapon"]]["family"]=="rope" else 10 if ranged else move["cost"]
@@ -538,6 +559,7 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                             a["x"] -= dx/dist*push; a["z"] -= dz/dist*push
                             b["x"] += dx/dist*push; b["z"] += dz/dist*push
             self.learning_tick()
+            self.tick_modes(dt)
 
     def easy_guard(self,f):
         """Choose only the guard pose; looking and pressing block stay manual."""
@@ -559,7 +581,7 @@ class Arena(ArenaFeatures,BotBrain,LearningCombat,Combat):
                 current = time.monotonic()
                 self.tick(min(.1,current-previous))
                 previous = current
-                time.sleep(1/30)
+                time.sleep(max(.001,1/30-(time.monotonic()-current)))
         finally:
             with self.lock:self.learning_close()
 

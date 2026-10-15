@@ -1,4 +1,10 @@
-# Xervexl 0.4 — progression and combat rules
+# Xervexl 0.8 — progression and combat rules
+
+Official round victories grant **650 XP, 350 crowns and 25 skill** once per registered member of the winning round roster. Eliminated/disconnected squad members are included. Moving to another arena cannot erase the award on the next progress sync. Winning bots receive the same bonus for their current character. The endless arena keeps its existing kill/death economy and has no final winner.
+
+The 100-fighter squad mode has 25 teams of four and disables friendly damage, disarm farming and hostile ropes between teammates. Lethal damage can down a fighter for 24 seconds; a teammate within 2.2 metres can channel a three-second revive to restore half health. Releasing, moving, attacking, blocking, taking damage or leaving range interrupts it. Several helpers do not shorten the channel. Finishing damage, bleeding out or losing the whole upright squad eliminates the fighter for the round. A living, upright killer retains the full-health/stamina refill; elimination does not automatically revive a dead/downed shooter.
+
+Custom workshop modes are **unranked**. Their script scores, XP/crowns, temporary starting equipment and combat stat changes remain within the match and are excluded from persistent accounts and global leaderboards. Official mode rewards remain authoritative. See `WORKSHOP.md` for the supported event programming language.
 
 Implemented on the authoritative server in `rules.py`, `combat.py`, `arena_features.py` and `server.py`. Clients cannot submit XP, skill, crowns, rank, upgrades or hit rewards. New accounts start at **rank 1, 0 XP, 0 skill points, 100 crowns and a knife**. Updating the game does not reset existing accounts.
 

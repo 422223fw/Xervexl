@@ -5,6 +5,7 @@
 struct CombatKeys {
     float forward=0,side=0,mouseX=0,mouseY=0;
     bool left=false,right=false,middle=false,overhead=false,disarm=false,spin=false;
+    bool rising=false,reverseSpin=false,pommel=false,feint=false;
 };
 struct CombatControls {
     bool easy=true,leftWasDown=false;
@@ -25,6 +26,7 @@ struct CombatControls {
         if(k.right)return {}; // Block wins and clears any queued attack.
         if(k.disarm)return "disarm";
         if(k.spin)return "spin";
+        if(k.reverseSpin)return "reverse_spin";if(k.rising)return "rising";if(k.pommel)return "pommel";if(k.feint)return "feint";
         if(k.middle){cut=3;return "thrust";}
         if(k.overhead){cut=2;return "overhead";}
         const char* cuts[]={"left","right","overhead","thrust"};

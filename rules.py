@@ -3,7 +3,7 @@ import math
 import sys
 from functools import lru_cache
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 PROGRESSION_VERSION = 1
 # Authoritative XP can grow beyond the interpreter's default decimal digit limit.
 if hasattr(sys,"set_int_max_str_digits"):sys.set_int_max_str_digits(0)
@@ -69,12 +69,16 @@ RANGED = {"bow","crossbow","slingshot","staff"}
 TARGET_HEIGHTS = {"head":1.86,"body":1.25,"legs":.55}
 BODY_MULTIPLIERS = {"head":1.45,"body":1.,"arms":.82,"legs":.68}
 MOVES = {
-    "left":dict(cost=12,windup=.18,follow=.28,multiplier=1.,reach=0.,arc=1.05),
-    "right":dict(cost=12,windup=.18,follow=.28,multiplier=1.,reach=0.,arc=1.05),
-    "overhead":dict(cost=20,windup=.26,follow=.32,multiplier=1.2,reach=0.,arc=.46),
-    "thrust":dict(cost=12,windup=.18,follow=.26,multiplier=.85,reach=.35,arc=.30),
-    "spin":dict(cost=30,windup=.36,follow=.44,multiplier=.82,reach=0.,arc=math.pi),
-    "disarm":dict(cost=22,windup=.24,follow=.28,multiplier=0.,reach=0.,arc=.8),
+    "left":dict(cost=12,windup=.24,follow=.36,multiplier=1.,reach=0.,arc=1.05),
+    "right":dict(cost=12,windup=.24,follow=.36,multiplier=1.,reach=0.,arc=1.05),
+    "overhead":dict(cost=20,windup=.34,follow=.42,multiplier=1.2,reach=0.,arc=.46),
+    "thrust":dict(cost=12,windup=.24,follow=.34,multiplier=.85,reach=.35,arc=.30),
+    "spin":dict(cost=30,windup=.46,follow=.58,multiplier=.82,reach=0.,arc=math.pi),
+    "reverse_spin":dict(cost=30,windup=.46,follow=.58,multiplier=.82,reach=0.,arc=math.pi),
+    "disarm":dict(cost=22,windup=.30,follow=.36,multiplier=0.,reach=0.,arc=.8),
+    "rising":dict(cost=16,windup=.28,follow=.38,multiplier=1.02,reach=0.,arc=.75),
+    "pommel":dict(cost=10,windup=.22,follow=.30,multiplier=.45,reach=-.65,arc=.65),
+    "feint":dict(cost=6,windup=.12,follow=.20,multiplier=0.,reach=0.,arc=0.),
 }
 PERSISTENT = ("xp","skill","coins","kills","deaths","parries","disarms","health_upgrades","stability_upgrades")
 

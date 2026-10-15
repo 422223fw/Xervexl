@@ -120,7 +120,7 @@ class MotionTests(unittest.TestCase):
 
     def test_world_generation_has_five_distinct_repeatable_biomes(self):
         worlds=make_worlds(42)
-        self.assertEqual(len({w["biome"] for w in worlds}),5)
+        self.assertEqual(len({w["biome"] for w in worlds}),8)
         self.assertEqual(worlds,make_worlds(42))
         self.assertNotEqual(worlds[0]["props"],make_worlds(43)[0]["props"])
 

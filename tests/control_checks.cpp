@@ -10,6 +10,7 @@ int main(){
     k.middle=true;assert(c.attack(k)=="thrust");k.middle=false;
     k.overhead=true;assert(c.attack(k)=="overhead");k.overhead=false;
     k.right=true;k.spin=true;k.disarm=true;
+    k.rising=k.reverseSpin=k.pommel=k.feint=true;
     assert(c.attack(k).empty()); // Blocking beats every attack, including holding LMB.
     k={};c.easy=false;k.forward=1;k.left=true;assert(c.attack(k)=="overhead");
     k.forward=-1;assert(c.attack(k)=="thrust");
@@ -19,5 +20,7 @@ int main(){
     assert(first!=second); // Standing manual clicks still alternate.
     k={};k.right=true;k.mouseY=-8;c.attack(k);assert(c.guard=="up");
     c.easy=true;k.left=true;assert(c.attack(k).empty());
+    k={};k.rising=true;assert(c.attack(k)=="rising");k={};k.reverseSpin=true;assert(c.attack(k)=="reverse_spin");
+    k={};k.pommel=true;assert(c.attack(k)=="pommel");k={};k.feint=true;assert(c.attack(k)=="feint");
     std::cout<<"Combat controls: movement-independent easy cuts, manual cuts, thrust, overhead and block priority passed.\n";
 }

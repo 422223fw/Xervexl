@@ -6,7 +6,8 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from http.client import HTTPConnection
 from pathlib import Path
-from arena_features import SERVER_CAPACITY
+from arena_features import SERVER_CAPACITY, WORLD_TYPES
+BASE=len(WORLD_TYPES)
 from server import Arena, Handler, ThreadingHTTPServer, password_hash
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -41,40 +42,40 @@ class CapacityTests(unittest.TestCase):
 
     def test_hundredth_player_opens_exactly_one_new_server_without_moving_existing_players(self):
         self.fill(99);before={f['id'] for f in self.arena.fighters.values() if not f['bot']}
-        self.assertEqual(len(self.arena.worlds),5)
+        self.assertEqual(len(self.arena.worlds),BASE)
         self.enter()
         self.assertEqual(self.arena.populations()[0],100)
-        self.assertEqual(len(self.arena.worlds),6)
+        self.assertEqual(len(self.arena.worlds),BASE+1)
         self.assertTrue(before.issubset(self.arena.fighters))
-        spare=self.arena.worlds[5]
+        spare=self.arena.worlds[BASE]
         self.assertEqual(spare['biome'],self.arena.worlds[0]['biome'])
         self.assertNotEqual(spare['seed'],self.arena.worlds[0]['seed'])
         self.assertNotEqual(spare['props'],self.arena.worlds[0]['props'])
-        self.assertEqual(self.arena.populations()[5],0)
+        self.assertEqual(self.arena.populations()[BASE],0)
 
     def test_automatic_player_101_enters_new_server_and_gets_filler_bots(self):
         self.fill();result=self.enter(world=None)
-        self.assertEqual(result['world']['id'],5)
+        self.assertEqual(result['world']['id'],BASE)
         self.assertEqual(result['world']['humans'],1)
         self.assertEqual(result['world']['bots'],9)
         self.assertEqual(self.arena.populations()[0],100)
-        self.assertEqual(len(self.arena.worlds),6)
+        self.assertEqual(len(self.arena.worlds),BASE+1)
 
     def test_explicit_join_to_full_server_reports_actual_destination(self):
         self.fill();result=self.enter(world=0)
-        self.assertEqual(result['world']['id'],5)
+        self.assertEqual(result['world']['id'],BASE)
         self.assertIn('full',result['message'])
-        self.assertEqual(self.arena.fighters[result['player']]['world_id'],5)
+        self.assertEqual(self.arena.fighters[result['player']]['world_id'],BASE)
         self.assertEqual(result['world']['capacity'],SERVER_CAPACITY)
 
     def test_two_hundred_players_create_a_third_instance_without_overbooking(self):
         self.fill(200)
         self.assertEqual(self.arena.populations()[0],100)
-        self.assertEqual(self.arena.populations()[5],100)
-        self.assertEqual(self.arena.populations()[6],0)
-        self.assertEqual(len(self.arena.worlds),7)
+        self.assertEqual(self.arena.populations()[BASE],100)
+        self.assertEqual(self.arena.populations()[BASE+1],0)
+        self.assertEqual(len(self.arena.worlds),BASE+2)
         result=self.enter(world=None)
-        self.assertEqual(result['world']['id'],6)
+        self.assertEqual(result['world']['id'],BASE+1)
         self.assertTrue(all(n<=100 for n in self.arena.populations().values()))
 
     def test_rejoining_a_full_server_keeps_current_avatar_and_uses_no_extra_slot(self):
@@ -86,7 +87,7 @@ class CapacityTests(unittest.TestCase):
             self.assertEqual(result['player'],actor['id'])
         self.assertEqual((actor['hp'],actor['stamina']),(37,24))
         self.assertEqual(self.arena.populations()[0],100)
-        self.assertEqual(len(self.arena.worlds),6)
+        self.assertEqual(len(self.arena.worlds),BASE+1)
 
     def test_another_device_of_same_account_replaces_its_slot_in_full_server(self):
         self.fill();first=self.tokens[0];user=self.arena.sessions[first]['user']
@@ -95,18 +96,18 @@ class CapacityTests(unittest.TestCase):
         self.assertEqual(result['world']['id'],0)
         self.assertEqual(self.arena.sessions[first]['fighter'],'')
         self.assertEqual(sum(not f['bot'] for f in self.arena.fighters.values()),100)
-        self.assertEqual(len(self.arena.worlds),6)
+        self.assertEqual(len(self.arena.worlds),BASE+1)
 
     def test_departure_reopens_a_slot_and_reuses_existing_server(self):
         self.fill();self.arena.request('/arena/leave',{},self.tokens[0])
         result=self.enter(world=None)
         self.assertEqual(result['world']['id'],0)
         self.assertEqual(self.arena.populations()[0],100)
-        self.assertEqual(len(self.arena.worlds),6)
+        self.assertEqual(len(self.arena.worlds),BASE+1)
 
     def test_bots_and_signed_in_home_accounts_do_not_consume_human_capacity(self):
         for _ in range(101):self.account()
-        self.assertEqual(len(self.arena.worlds),5)
+        self.assertEqual(len(self.arena.worlds),BASE)
         info=self.arena.request('/servers',{})['worlds'][0]
         self.assertEqual((info['humans'],info['bots'],info['available']),(0,10,100))
         result=self.enter(self.tokens[0],0)
@@ -134,17 +135,17 @@ class CapacityTests(unittest.TestCase):
         user.update(coins=1357,xp=1000,skill=41,inventory=['knife','arming'],weapon='arming')
         first=self.enter(token,1)
         moved=self.enter(token,0)
-        self.assertEqual(moved['world']['id'],5)
+        self.assertEqual(moved['world']['id'],BASE)
         for key in ('coins','xp','skill','inventory','weapon'):self.assertEqual(moved['profile'][key],first['profile'][key])
         self.assertEqual(self.arena.populations()[1],0)
 
     def test_listing_is_live_metadata_and_does_not_leak_accounts(self):
         self.fill();result=self.arena.request('/servers',{})
         self.assertEqual(result['server_capacity'],100)
-        self.assertEqual(len(result['worlds']),6)
+        self.assertEqual(len(result['worlds']),BASE+1)
         full=result['worlds'][0]
         self.assertTrue(full['full']);self.assertEqual(full['available'],0)
-        self.assertFalse(result['worlds'][5]['full'])
+        self.assertFalse(result['worlds'][BASE]['full'])
         self.assertNotIn('props',full)
         text=json.dumps(result)
         for secret in ('password','email','LoadPlayer',self.tokens[0]):self.assertNotIn(secret,text)
@@ -159,7 +160,7 @@ class CapacityTests(unittest.TestCase):
         drop=self.arena.drops[-1];drop.update(x=0,z=1,y=.06,age=1.2)
         self.assertFalse(self.arena.pickup_weapon(b))
         state=self.arena.request('/arena/state',{},self.tokens[-1])
-        self.assertTrue(all(f['world_id']==5 for f in state['fighters']))
+        self.assertTrue(all(f['world_id']==BASE for f in state['fighters']))
         self.assertNotIn(drop,state['drops'])
 
     def test_concurrent_http_joins_at_99_do_not_overbook_or_duplicate_spares(self):
@@ -179,10 +180,10 @@ class CapacityTests(unittest.TestCase):
         finally:
             http.shutdown();http.server_close();service.join()
         self.assertEqual(destinations.count(0),1)
-        self.assertEqual(destinations.count(5),7)
-        self.assertEqual(len(self.arena.worlds),6)
+        self.assertEqual(destinations.count(BASE),7)
+        self.assertEqual(len(self.arena.worlds),BASE+1)
         self.assertEqual(self.arena.populations()[0],100)
-        self.assertEqual(self.arena.populations()[5],7)
+        self.assertEqual(self.arena.populations()[BASE],7)
 
 
 if __name__=='__main__':unittest.main()

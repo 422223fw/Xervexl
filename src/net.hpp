@@ -17,6 +17,7 @@ struct Network {
     struct Task { std::string route;json body;std::string authOverride,baseOverride; };
     std::mutex mutex;std::deque<Task> tasks;
     json world=json::object(),profile=json::object(),input=json::object(),catalog=json::array(),boards=json::object(),worlds=json::array();
+    json modes=json::array(),blueprint=json::object();std::string savedMode,blueprintId;
     std::string url="http://127.0.0.1:8765",token,error,message,player;
     std::atomic<bool> running{true};bool connected=false,joined=false,busy=false,restoring=false;
     unsigned generation=0;
@@ -120,12 +121,16 @@ struct Network {
                         if(result.contains("profile"))profile=result["profile"];
                         if(result.contains("catalog"))catalog=result["catalog"];
                         if(result.contains("worlds"))worlds=result["worlds"];
+                        if(result.contains("modes"))modes=result["modes"];
+                        if(result.contains("saved_mode"))savedMode=result["saved_mode"].get<std::string>();
+                        if(result.contains("blueprint")){blueprint=result["blueprint"];blueprintId=result.value("blueprint_id",std::string{});}
                         if(result.contains("leaderboards"))boards=result["leaderboards"];
                         if(result.contains("player"))player=result["player"].get<std::string>();
                         if(result.contains("fighters"))world=result;
                         if(result.contains("message"))message=result["message"].get<std::string>();
                         if(task.route=="/arena/join")joined=true;
                         if(task.route=="/arena/world")joined=true;
+                        if(task.route=="/modes/join")joined=true;
                         if(task.route=="/arena/leave")joined=false;
                         if(task.route=="/arena/state"&&joined&&player.empty()){
                             // An inactive/other-device avatar can disappear while sign-in stays valid.

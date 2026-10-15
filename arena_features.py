@@ -6,7 +6,8 @@ from collections import Counter
 from rules import ITEMS,RANGED
 
 SERVER_CAPACITY=100
-WORLD_TYPES=(("Sunstone Court","desert"),("Oak Ruins","forest"),("Winter Keep","snow"),("Tidewatch Fort","coast"),("Ember Basin","volcanic"))
+WORLD_TYPES=(("Sunstone Court","desert"),("Oak Ruins","forest"),("Winter Keep","snow"),("Tidewatch Fort","coast"),("Ember Basin","volcanic"),
+             ("Amber Grove","autumn"),("Moonlit Citadel","night"),("Marsh Ruins","marsh"))
 
 
 def wrap_angle(a):return (a+math.pi)%math.tau-math.pi
@@ -14,13 +15,13 @@ def wrap_angle(a):return (a+math.pi)%math.tau-math.pi
 
 def make_world(identifier,template_id,world_seed,instance=1,overflow_of=None):
     name,biome=WORLD_TYPES[template_id];rng=random.Random(world_seed);props=[]
-    count={"desert":18,"forest":24,"snow":16,"coast":20,"volcanic":22}[biome]
+    count={"desert":18,"forest":24,"snow":16,"coast":20,"volcanic":22,"autumn":24,"night":20,"marsh":22}[biome]
     for i in range(count):
         for attempt in range(100):
             a=rng.random()*math.tau;r=rng.uniform(9,30);x,z=math.sin(a)*r,math.cos(a)*r
             radius=rng.uniform(.65,1.2)
             if all(math.hypot(x-p['x'],z-p['z'])>radius+p['radius']+1.4 for p in props):break
-        kind="tree" if biome=="forest" and i%2==0 else "ruin" if biome in ("desert","snow") and i%4==0 else "pillar" if i%3==0 else "rock"
+        kind="tree" if biome in ('forest','autumn','marsh') and i%2==0 else "ruin" if biome in ("desert","snow","night") and i%4==0 else "pillar" if i%3==0 else "rock"
         props.append(dict(x=x,z=z,radius=radius,height=rng.uniform(1.4,3.8) if kind!="tree" else rng.uniform(4,6),kind=kind))
     return dict(id=identifier,name=name,biome=biome,seed=world_seed,radius=38,props=props,
                 template_id=template_id,instance=instance,server_number=identifier+1,capacity=SERVER_CAPACITY,overflow_of=overflow_of)
@@ -44,13 +45,15 @@ class ArenaFeatures:
     def world_info(self,world_id):
         world=self.worlds[world_id];humans=self.populations()[world_id]
         bots=sum(f['bot'] and f['world_id']==world_id for f in self.fighters.values())
-        return dict(world,humans=humans,bots=bots,full=humans>=SERVER_CAPACITY,available=max(0,SERVER_CAPACITY-humans))
+        capacity=world.get('capacity',SERVER_CAPACITY);match=self.matches.get(world_id)
+        locked=match and match['phase'] in ('playing','finished')
+        return dict(world,humans=humans,bots=bots,full=bool(locked or humans>=capacity),available=0 if locked else max(0,capacity-humans))
 
     def world_catalog(self):
         humans=self.populations();bots=Counter(f['world_id'] for f in self.fighters.values() if f['bot'])
         # Listing metadata stays small; geometry is sent only for the joined room.
         return [dict({k:v for k,v in w.items() if k!='props'},humans=humans[w['id']],bots=bots[w['id']],
-                     full=humans[w['id']]>=SERVER_CAPACITY,available=max(0,SERVER_CAPACITY-humans[w['id']])) for w in self.worlds]
+                     full=humans[w['id']]>=w.get('capacity',SERVER_CAPACITY) or self.matches.get(w['id'],{}).get('phase') in ('playing','finished'),available=max(0,w.get('capacity',SERVER_CAPACITY)-humans[w['id']])) for w in self.worlds]
 
     def create_world(self,source_id):
         source=self.worlds[source_id];template=source['template_id']
@@ -62,10 +65,11 @@ class ArenaFeatures:
         return world['id']
 
     def ensure_spare(self,world_id):
+        if self.worlds[world_id].get('mode_id'):return
         counts=self.populations()
         if counts[world_id]<SERVER_CAPACITY:return
         template=self.worlds[world_id]['template_id']
-        if not any(w['template_id']==template and counts[w['id']]<SERVER_CAPACITY for w in self.worlds):
+        if not any(not w.get('mode_id') and w['template_id']==template and counts[w['id']]<SERVER_CAPACITY for w in self.worlds):
             self.create_world(world_id)
 
     def available_world(self,requested,ignore=()):
@@ -73,12 +77,12 @@ class ArenaFeatures:
         counts=self.populations(ignore)
         if counts[requested]<SERVER_CAPACITY:return requested
         template=self.worlds[requested]['template_id']
-        candidates=[w['id'] for w in self.worlds if w['template_id']==template and counts[w['id']]<SERVER_CAPACITY]
+        candidates=[w['id'] for w in self.worlds if not w.get('mode_id') and w['template_id']==template and counts[w['id']]<SERVER_CAPACITY]
         return max(candidates,key=lambda w:(counts[w],-w)) if candidates else self.create_world(requested)
 
     def choose_world(self,exclude=None,ignore=()):
         counts=self.populations(ignore)
-        available=[w['id'] for w in self.worlds if w['id']!=exclude and counts[w['id']]<SERVER_CAPACITY]
+        available=[w['id'] for w in self.worlds if not w.get('mode_id') and w['id']!=exclude and counts[w['id']]<SERVER_CAPACITY]
         if not available:return self.create_world(exclude if exclude is not None else self.default_world)
         if exclude is None:
             populated=[w for w in available if counts[w]>0]
@@ -136,7 +140,7 @@ class ArenaFeatures:
     def fire_rope(self,f):
         item=ITEMS[f["weapon"]];targets=[]
         for other in self.fighters.values():
-            if other is f or not self.same_world(f,other) or other["dead"]>0 or other["spawn_safe"]>0:continue
+            if not self.can_fight(f,other) or other["dead"]>0 or other["spawn_safe"]>0:continue
             dx,dz=other["x"]-f["x"],other["z"]-f["z"];distance=math.hypot(dx,dz)
             if distance<item["reach"] and abs(wrap_angle(math.atan2(dx,dz)-f["yaw"]))<.2:targets.append((distance,other))
         if targets:

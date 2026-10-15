@@ -98,21 +98,27 @@ class BotBrain:
         return [mx,mz]
 
     def bot_input(self,f):
+        mode_input=self.mode_bot_input(f)
+        if mode_input is not None:return mode_input
         drops=[d for d in self.drops if d['world_id']==f['world_id']]
         if f['weapon']=='fists' and drops:
             drop=min(drops,key=lambda d:math.hypot(d['x']-f['x'],d['z']-f['z']))
             yaw=math.atan2(drop['x']-f['x'],drop['z']-f['z'])
             return dict(move=self.steer_bot(f,[math.sin(yaw),math.cos(yaw)]),yaw=yaw,pickup=True)
-        enemies=[a for a in self.fighters.values() if a is not f and a['dead']<=0 and self.same_world(f,a)]
+        cached=getattr(self,'_bot_enemies',None)
+        enemies=[a for a in cached.get((f['world_id'],f.get('team',-1)),[]) if a is not f and a['dead']<=0] if cached is not None else [a for a in self.fighters.values() if a['dead']<=0 and self.can_fight(f,a)]
         if not enemies:return {}
-        target=self.target_for(f,enemies);new_target=target['id']!=f.get('target_id');f['target_id']=target['id']
+        target=self.fighters.get(f.get('target_id',''))
+        if cached is None or self.clock>=f.get('target_at',0) or not target or target['dead']>0 or not self.can_fight(f,target):
+            target=self.target_for(f,enemies);f['target_at']=self.clock+.15
+        new_target=target['id']!=f.get('target_id');f['target_id']=target['id']
         memory=f.setdefault('bot_memory',{})
         observation=(target['id'],target['attack_id'])
         if observation!=memory.get('observed'):
             memory.update(observed=observation,seen_at=self.clock)
             if target['attack'] in ('left','right','overhead','thrust'):
                 habits=memory.setdefault('habits',{});habits[target['attack']]=habits.get(target['attack'],0)+1
-        if new_target or self.clock>=f['plan_at']:
+        if (new_target or self.clock>=f['plan_at']) and (getattr(self,'_planning_slots',None) is None or f['id'] in self._planning_slots):
             f['action']=self.plan_bot(f,target);f['plan_at']=self.clock+.18+(5-f['depth'])*.05
         yaw=math.atan2(target['x']-f['x'],target['z']-f['z']);action=f['action']
         mx,mz=math.sin(yaw),math.cos(yaw)

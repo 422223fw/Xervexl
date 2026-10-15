@@ -18,6 +18,8 @@ class Combat:
         self.events=self.events[-80:]
 
     def sync_progress(self,f):
+        match=self.match_for(f)
+        if match and not match['mode']['ranked']:return
         for s in self.sessions.values():
             if s["fighter"]==f["id"]:
                 for key in PERSISTENT: s["user"][key]=f[key]
@@ -40,6 +42,8 @@ class Combat:
             rows["user:"+u["username"].lower()]=dict(username=u["username"],bot=False,level=level_for_xp(u["xp"]),
                     **{k:u[k] for k in ("xp","skill","coins","kills")})
         for f in self.fighters.values():
+            match=self.match_for(f)
+            if match and not match['mode']['ranked']:continue
             key=f["id"] if f["bot"] or f["name"].startswith("Guest-") else "user:"+f["name"].lower()
             rows[key]=dict(username=f["name"],bot=f["bot"],**{k:f[k] for k in ("level","xp","skill","coins","kills")})
         return {key:[{k:public_integer(v) if isinstance(v,int) and not isinstance(v,bool) else v for k,v in row.items()} for row in sorted(rows.values(),key=lambda r:(r[key],r["xp"],r["username"]),reverse=True)[:12]]
@@ -67,7 +71,7 @@ class Combat:
         return True
 
     def pickup_candidate(self,f):
-        if f['dead']>0:return None
+        if f['dead']>0 or f.get('downed',0)>0:return None
         nearby=[d for d in self.drops if d['world_id']==f['world_id'] and d['age']>=.45 and d['y']<=.22
                 and d['expires']>self.clock and math.hypot(d['x']-f['x'],d['z']-f['z'])<1.7]
         # Recover your dropped blade first when several weapons lie at your feet.
@@ -94,13 +98,20 @@ class Combat:
         return True
 
     def damage(self,attacker,victim,base,zone,kind="hit",magic="",pierce=0.,learning_ticket=None):
-        if victim["dead"]>0 or victim["spawn_safe"]>0 or attacker["spawn_safe"]>0 or not self.same_world(attacker,victim):return
+        if victim["dead"]>0 or victim["spawn_safe"]>0 or attacker["spawn_safe"]>0 or not self.can_fight(attacker,victim):return
+        if victim.get('downed',0)>0:
+            victim['down_hp']-=max(0,base);victim['last_hurt']=self.clock
+            if victim['down_hp']<=0:self.finish_kill(self.fighters.get(victim.get('downer','')) or attacker,victim,zone)
+            return
         armour=ITEMS.get(victim["armour"],{}).get("reduction",0)*(1-pierce)
         if zone=="head":armour=ITEMS.get(victim["helmet"],{}).get("reduction",0)
         amount=min(75.,base*BODY_MULTIPLIERS[zone]*(1-armour))
         absorbed=min(victim["ward"],amount);victim["ward"]-=absorbed;amount-=absorbed
         actual=min(victim['hp'],amount)
         victim["hp"]=max(0.,victim["hp"]-amount)
+        if amount>0:victim['last_hurt']=self.clock
+        downed=victim['hp']<=0 and self.mode_down(victim,attacker)
+        if downed:actual=max(0,actual-1)
         ticket=learning_ticket if learning_ticket is not None else attacker.get('attack_learning') if kind=='hit' else None
         self.learning_damage(attacker,victim,actual,ticket,blocked=base<=0 and victim['block'])
         if kind!="burn":self.balanced_hit(victim,amount,zone)
@@ -111,17 +122,26 @@ class Combat:
         if magic=="fire" and amount>0 and kind!="burn":
             victim["burn"]=3.;victim["burn_source"]=attacker["id"];victim["burn_tick"]=0.
         self.emit(kind,source=attacker["id"],target=victim["id"],damage=round(amount,1),zone=zone,weapon=attacker["weapon"])
-        if victim["hp"]<=0:
-            victim["dead"]=3.5;victim["deaths"]+=1;victim["windup"]=0;victim["attack"]="";victim["queued_attack"]="";attacker["kills"]+=1
+        if downed:self.script_event('down',attacker,zone)
+        if victim["hp"]<=0:self.finish_kill(attacker,victim,zone)
+
+    def finish_kill(self,attacker,victim,zone='body'):
+        if victim['dead']>0:return
+        victim.update(hp=0.,dead=3.5,windup=0.,attack='',queued_attack='');victim['deaths']+=1
+        self.mode_eliminated(victim,attacker)
+        if attacker:
+            attacker['kills']+=1
             reward=kill_reward(victim["level"])
             penalty=death_penalty(victim["level"],attacker["level"])
             actual_loss=min(victim["skill"],penalty)
             self.grant(attacker,**reward)
-            if attacker["dead"]<=0:
+            if attacker["dead"]<=0 and attacker.get('downed',0)<=0:
                 attacker.update(hp=attacker["max_hp"],stamina=100.)
             self.grant(victim,skill=-penalty)
             self.emit("kill",source=attacker["name"],target=victim["name"],source_id=attacker["id"],target_id=victim["id"],
                       xp=reward["xp"],skill=reward["skill"],coins=reward["coins"],lost_skill=actual_loss)
+            self.script_event('kill',attacker,zone)
+        else:self.sync_progress(victim)
 
     def strike(self,attacker):
         ticket=attacker.get('attack_learning')
@@ -130,8 +150,9 @@ class Combat:
             if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
 
     def perform_strike(self,attacker):
-        if attacker["spawn_safe"]>0 or attacker["dead"]>0 or attacker["disarmed"]>0 or attacker["fall"]>0:return
+        if attacker["spawn_safe"]>0 or attacker["dead"]>0 or attacker["disarmed"]>0 or attacker["fall"]>0 or attacker.get('downed',0)>0:return
         item=ITEMS[attacker["weapon"]]
+        if attacker['attack']=='feint':return
         if item["family"]=="rope":self.fire_rope(attacker);return
         if item["family"] in RANGED:
             self.shoot(attacker,item)
@@ -140,7 +161,7 @@ class Combat:
         reach=item["reach"]+move["reach"]
         arc=move["arc"]
         for victim in list(self.fighters.values()):
-            if victim is attacker or victim["dead"]>0 or victim["dodge"]>0 or victim["spawn_safe"]>0 or not self.same_world(attacker,victim):continue
+            if victim["dead"]>0 or victim["dodge"]>0 or victim["spawn_safe"]>0 or not self.can_fight(attacker,victim):continue
             dx,dz=victim["x"]-attacker["x"],victim["z"]-attacker["z"]
             if math.hypot(dx,dz)>reach or abs(angle(math.atan2(dx,dz)-attacker["yaw"]))>arc:continue
             facing=abs(angle(math.atan2(-dx,-dz)-victim["yaw"]))<1.15
@@ -217,7 +238,7 @@ class Combat:
                 continue
             consumed=False
             for victim in self.fighters.values():
-                if victim["id"]==p["owner"] or victim["dead"]>0 or victim["spawn_safe"]>0 or victim["dodge"]>0 or victim["world_id"]!=p["world_id"]:continue
+                if victim["dead"]>0 or victim["spawn_safe"]>0 or victim["dodge"]>0 or not self.can_fight(attacker,victim):continue
                 # Swept segment versus the upright hit capsule; avoids fast-bolt tunnelling.
                 dx,dz=p["x"]-old[0],p["z"]-old[2];den=dx*dx+dz*dz
                 t=max(0,min(1,((victim["x"]-old[0])*dx+(victim["z"]-old[2])*dz)/den)) if den else 0
