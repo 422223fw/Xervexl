@@ -117,6 +117,8 @@ struct App {
             if((kind=="parry"&&e.value("target",std::string{})==player)||(kind=="deflect"&&e.value("source",std::string{})==player))toast("PERFECT DEFENCE / XP + SKILL / ZERO STAMINA COST");
             if(kind=="disarm"&&e.value("source",std::string{})==player)toast("DISARM / XP + SKILL EARNED");
             if(kind=="disarm"&&e.value("target",std::string{})==player)toast("WEAPON LOST / SKILL LOST / F TO RECOVER YOUR BLADE");
+            if(kind=="grip_hold"&&e.value("target",std::string{})==player)toast("GRIP HELD / WEAPON RETAINED");
+            if(kind=="grip_hold"&&e.value("source",std::string{})==player)toast("OPPONENT HELD THEIR GRIP");
             if(kind=="pickup"&&e.value("source",std::string{})==player)toast("PICKED UP: "+item_info(e.value("weapon",std::string("knife"))).value("name",std::string("WEAPON")));
             if(kind=="level"&&e.value("target",std::string{})==player)toast("LEVEL UP! RANK "+std::to_string(e.value("level",1)));
             if(kind=="fall"&&e.value("target",std::string{})==player)toast("KNOCKED DOWN / RECOVERING FOOTING");
@@ -231,7 +233,7 @@ struct App {
         if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.8",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.8.1",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});

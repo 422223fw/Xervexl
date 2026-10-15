@@ -65,10 +65,10 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(self.a["weapon"],"longsword")
         self.assertEqual(self.b["stamina"],80)
 
-    def test_last_instant_directional_guard_disarms_full_stamina_attacker(self):
+    def test_last_instant_guard_parries_without_disarming_a_healthy_grip(self):
         self.b.update(block=True,block_since=self.arena.clock,guard_dir="right")
         self.arena.strike(self.a)
-        self.assertEqual(self.a["weapon"],"fists")
+        self.assertEqual(self.a["weapon"],"longsword")
         self.assertEqual(self.b["stamina"],100)
         self.assertGreater(self.b["xp"],0)
 

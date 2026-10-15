@@ -1,7 +1,7 @@
 {
   "name": "Xervexl",
   "company": "motlon",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "type": "native_windows_sword_arena",
   "renderers": ["OpenGL", "Vulkan"],
   "default_server": "http://127.0.0.1:8765",
@@ -13,7 +13,8 @@
   "default_combat_controls": "easy_with_optional_directional_mode",
   "combat_animation": "continuous_contact_arcs_with_guard_transitions_and_bounded_two_hand_grips",
   "progression": ["xp", "rank", "skill", "crowns"],
-  "shop_items": 46,
+  "shop_items": 47,
+  "grip_upgrade": {"first_price": 4000, "price_rule": "4000_times_next_upgrade_squared", "disarm_risk_multiplier_per_upgrade": 0.5},
   "biomes": 8,
   "initial_server_instances": 8,
   "official_round_modes": 8,

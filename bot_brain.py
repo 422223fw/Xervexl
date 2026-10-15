@@ -1,6 +1,6 @@
 """Bounded 2-5 step combat forecasts with visible-threat tactical reactions."""
 import math
-from rules import ITEMS,RANGED,TARGET_HEIGHTS,MOVES
+from rules import ITEMS,RANGED,TARGET_HEIGHTS,MOVES,grip_risk_multiplier
 from bot_learning import context, ATTACKS
 
 
@@ -45,7 +45,8 @@ class BotBrain:
                         st-=cost;reach=own['reach']+(.35 if action=='thrust' and not ranged else 0)
                         if d<reach:
                             if action=='disarm':
-                                if enemy['family']!='unarmed' and (es<35 or enemy_cd>.1 and not opponent['block']):bonus=24;enemy_cd=max(enemy_cd,1.)
+                                if enemy['family'] in ('blade','spear','axe','mace') and es<25 and enemy_cd>.1 and not opponent['block'] and d<=1.8 and self.clock>=opponent['grip_test_after']:
+                                    bonus=24*.08*grip_risk_multiplier(opponent['grip_upgrades'])
                             else:
                                 damage=own['damage']*(1.2 if action=='overhead' else .85 if action=='thrust' and not ranged else 1)*impact
                                 if ranged:damage*=max(.25,1-d/(own['reach']*1.5))*(.55 if math.hypot(opponent['move_x'],opponent['move_z'])>2 else 1)

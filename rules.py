@@ -3,7 +3,7 @@ import math
 import sys
 from functools import lru_cache
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 PROGRESSION_VERSION = 1
 # Authoritative XP can grow beyond the interpreter's default decimal digit limit.
 if hasattr(sys,"set_int_max_str_digits"):sys.set_int_max_str_digits(0)
@@ -63,6 +63,7 @@ WEAPONS += [
     dict(id="lasso",name="Combat lasso",price=4000,damage=0,reach=9,cooldown=2.,family="rope"),
 ]
 GEAR += [dict(id="stability",name="Permanent footing",price=16000,kind="upgrade",repeatable=True)]
+GEAR += [dict(id="grip",name="Permanent grip",price=4000,kind="upgrade",repeatable=True)]
 ITEMS = {i["id"]:i for i in WEAPONS+GEAR+SPELLS}
 CATALOG = [i for i in WEAPONS+GEAR+SPELLS if not i.get("hidden")]
 RANGED = {"bow","crossbow","slingshot","staff"}
@@ -80,7 +81,7 @@ MOVES = {
     "pommel":dict(cost=10,windup=.22,follow=.30,multiplier=.45,reach=-.65,arc=.65),
     "feint":dict(cost=6,windup=.12,follow=.20,multiplier=0.,reach=0.,arc=0.),
 }
-PERSISTENT = ("xp","skill","coins","kills","deaths","parries","disarms","health_upgrades","stability_upgrades")
+PERSISTENT = ("xp","skill","coins","kills","deaths","parries","disarms","health_upgrades","stability_upgrades","grip_upgrades")
 
 
 @lru_cache(maxsize=512)
@@ -122,11 +123,18 @@ def health_price(upgrades):
 def stability_price(upgrades):return 16000*(1+upgrades)**2
 
 
+def grip_price(upgrades):return 4000*(1+upgrades)**2
+
+
+def grip_risk_multiplier(upgrades):return .5**max(0,upgrades)
+
+
 def complete_account(user):
     """Add fields without replacing the user's existing equipment or progress."""
     for key,value in dict(xp=0,skill=0,parries=0,disarms=0,health_upgrades=0,helmet="",spell="").items():
         user.setdefault(key,value)
     user.setdefault("stability_upgrades",0)
+    user.setdefault("grip_upgrades",0)
     user.setdefault("progression_version",PROGRESSION_VERSION)
     if "weapon_slots" not in user:
         equipped=user.get("weapon","knife")

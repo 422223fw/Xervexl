@@ -6,6 +6,7 @@
         if(kind=="shield"){canvas.circle(x,y,23*scale,{.34f,.38f,.37f});canvas.circle(x,y,17*scale,{.18f,.24f,.22f});canvas.circle(x,y,7*scale,GOLD);}
         else if(kind=="armour"){canvas.rect(x-18*scale,y-24*scale,36*scale,48*scale,{.46f,.50f,.47f});canvas.triangle(x-18*scale,y-24*scale,x,y-35*scale,x+18*scale,y-24*scale,{.59f,.62f,.57f});canvas.rect(x-20*scale,y+14*scale,40*scale,5*scale,GOLD);}
         else if(kind=="helmet"){canvas.circle(x,y,24*scale,metal);canvas.rect(x-25*scale,y,50*scale,20*scale,INK);canvas.line(x-19*scale,y+2*scale,x+19*scale,y+2*scale,5*scale,metal);canvas.line(x,y-10*scale,x,y+16*scale,6*scale,metal);}
+        else if(id=="grip"){canvas.circle(x,y,29*scale,{.38f,.30f,.16f});canvas.line(x,y-28*scale,x,y+30*scale,7*scale,metal);canvas.line(x-18*scale,y-12*scale,x+18*scale,y-12*scale,5*scale,GOLD);for(int i=0;i<4;i++)canvas.line(x-7*scale,y+(-2+i*7)*scale,x+7*scale,y+(-6+i*7)*scale,5*scale,GOLD);}
         else if(kind=="upgrade"){canvas.circle(x,y,29*scale,id=="stability"?Colour{.24f,.47f,.35f}:Colour{.52f,.15f,.13f});canvas.rect(x-5*scale,y-17*scale,10*scale,34*scale,WHITE);canvas.rect(x-17*scale,y-5*scale,34*scale,10*scale,WHITE);}
         else if(kind=="spell"){canvas.circle(x,y,25*scale,{.20f,.43f,.61f});canvas.circle(x,y,17*scale,{.10f,.23f,.35f});canvas.line(x-10*scale,y+8*scale,x+2*scale,y-15*scale,4*scale,GOLD);canvas.line(x+2*scale,y-15*scale,x+11*scale,y+13*scale,4*scale,GOLD);}
         else if(family=="bow"){for(int i=0;i<12;i++){float a=-1.15f+i*2.3f/12,b=-1.15f+(i+1)*2.3f/12;canvas.line(x+std::cos(a)*28*scale-13*scale,y+std::sin(a)*45*scale,x+std::cos(b)*28*scale-13*scale,y+std::sin(b)*45*scale,4*scale,GOLD);}canvas.line(x,y-41*scale,x,y+41*scale,1*scale,WHITE);canvas.line(x-20*scale,y,x+42*scale,y,2*scale,metal);canvas.triangle(x+42*scale,y,x+32*scale,y-5*scale,x+32*scale,y+5*scale,metal);}
@@ -31,7 +32,7 @@
             int index=shopPage*8+slot;if(index>=static_cast<int>(items.size()))break;auto item=items[index];std::string id=item["id"],kind=item.value("kind",std::string("weapon"));
             float x=47+(slot%4)*301,y=180+(slot/4)*252;bool upgrade=kind=="upgrade",owned=false;
             if(profile.contains("inventory"))for(auto& v:profile["inventory"])if(v==id)owned=true;
-            bool equipped=!upgrade&&profile.value(kind,std::string{})==id;int price=upgrade?profile.value(id=="stability"?"stability_upgrade_price":"health_upgrade_price",id=="stability"?16000:12000):item.value("price",0);
+            bool equipped=!upgrade&&profile.value(kind,std::string{})==id;int price=upgrade?profile.value(id+"_upgrade_price",item.value("price",0)):item.value("price",0);
             canvas.rect(x,y,285,234,{.085f,.12f,.125f});canvas.border(x,y,285,234,equipped?GOLD:Colour{.20f,.27f,.26f});
             canvas.text(x+14,y+12,equipped?"EQUIPPED":upgrade?"PERMANENT UPGRADE":owned?"OWNED":item.contains("magic")?"RARE ARCANE":"AVAILABLE",1.1f,equipped?GOLD:MUTED);
             weapon_icon(x+142,y+87,id,.76f);std::string title=item.value("name",std::string{});float titleScale=Canvas::text_width(title,1.85f)>257?1.6f:1.85f;canvas.text(x+14,y+136,title,titleScale,WHITE);
@@ -41,6 +42,7 @@
             else if(kind=="armour"||kind=="helmet")detail=std::to_string(static_cast<int>(item.value("reduction",0.f)*100))+"% DEFENCE"+(kind=="helmet"?" / HEAD":" / BODY");
             else if(kind=="spell")detail=std::to_string(item.value("cost",0))+" STAMINA / "+std::to_string(static_cast<int>(item.value("cooldown",0.f)))+"S COOLDOWN / B";
             else if(id=="stability")detail="FALL RISK: 60% LESS PER UPGRADE";
+            else if(id=="grip")detail="GRIP "+std::to_string(profile.value("grip_upgrades",0))+" / DISARM RISK -50% EACH";
             else detail="MAX HP "+std::to_string(static_cast<int>(maxHp))+" -> "+std::to_string(static_cast<int>(maxHp)+20);
             canvas.text(x+14,y+159,detail,1.2f,MUTED);
             if(kind=="weapon")canvas.text(x+14,y+178,"RECOVERY "+std::to_string(item.value("cooldown",0.f)).substr(0,4)+"S",1.0f,MUTED);
@@ -50,7 +52,7 @@
         canvas.text(47,704,"PAGE "+std::to_string(shopPage+1)+" / "+std::to_string(pages),1.4f,MUTED);
         if(button(931,697,139,38,"PREVIOUS")&&shopPage>0)shopPage--;
         if(button(1083,697,149,38,"NEXT")&&shopPage+1<pages)shopPage++;
-        canvas.text(47,755,shopCategory==4?"PERMANENT HEALTH AND FOOTING. LATER UPGRADES COST MORE. BLOCKING DOES NOT DRAIN STAMINA.":"1-5 SWITCH WEAPONS. HOLD LEFT CLICK TO CUT / MIDDLE CLICK TO THRUST / RIGHT CLICK TO GUARD.",1.3f,MUTED);
+        canvas.text(47,755,shopCategory==4?"PERMANENT HEALTH, FOOTING AND GRIP. LATER UPGRADES COST MORE. GUARDING COSTS NO STAMINA.":"1-5 SWITCH WEAPONS. HOLD LEFT CLICK TO CUT / MIDDLE CLICK TO THRUST / RIGHT CLICK TO GUARD.",1.3f,MUTED);
     }
     void inventory_view(){
         canvas.rect(0,0,1280,800,{.025f,.041f,.044f,.98f});canvas.text(47,29,"YOUR INVENTORY",3.5f,GOLD);

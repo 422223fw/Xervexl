@@ -2,7 +2,7 @@
 import math
 import secrets
 from rules import (ITEMS,RANGED,TARGET_HEIGHTS,BODY_MULTIPLIERS,PERSISTENT,
-                   level_for_xp,kill_reward,death_penalty,zone_from_height,public_integer,MOVES)
+                   level_for_xp,kill_reward,death_penalty,zone_from_height,public_integer,MOVES,grip_risk_multiplier)
 
 
 def angle(a): return (a+math.pi)%math.tau-math.pi
@@ -52,6 +52,28 @@ class Combat:
     def lift(self,f):
         remaining=f["jump"]
         return math.sin((.55-remaining)/.55*math.pi)*.65 if remaining>0 else 0.
+
+    def try_disarm(self,disarmer,victim,parry=False):
+        """Rare blade contact against an exhausted grip; failed pulls earn nothing."""
+        if not self.can_fight(disarmer,victim):return False
+        for fighter in (disarmer,victim):
+            if fighter['dead']>0 or fighter['spawn_safe']>0 or fighter.get('downed',0)>0 or fighter['fall']>0 or fighter['disarmed']>0:return False
+        melee={'blade','spear','axe','mace'}
+        if ITEMS[disarmer['weapon']]['family'] not in melee or ITEMS[victim['weapon']]['family'] not in melee:return False
+        if self.clock<victim['grip_test_after'] or victim['stamina']>=25:return False
+        dx,dz=victim['x']-disarmer['x'],victim['z']-disarmer['z']
+        if math.hypot(dx,dz)>1.8 or abs(angle(math.atan2(dx,dz)-disarmer['yaw']))>.25:return False
+        if parry:
+            if not disarmer['block'] or not 0<=self.clock-disarmer['block_since']<=.07 or not self.guard_matches(victim,disarmer):return False
+        elif victim['block'] or victim['cooldown']<=.1 or victim['windup']>0:return False
+        # All opponents share this retry window, so surrounding one target cannot
+        # turn many failed pulls in the same instant into a guaranteed disarm.
+        victim['grip_test_after']=self.clock+3.
+        chance=(.04 if parry else .08)*grip_risk_multiplier(victim['grip_upgrades'])
+        if self.rng.random()>=chance:
+            self.emit('grip_hold',source=disarmer['id'],target=victim['id'])
+            return False
+        return self.drop_weapon(victim,disarmer)
 
     def drop_weapon(self,f,disarmer=None):
         if f["weapon"]=="fists" or f["dead"]>0:return False
@@ -174,11 +196,10 @@ class Combat:
                     attacker["cooldown"]=max(attacker["cooldown"],.85)
                     self.parry_reward(victim,attacker)
                     self.emit("parry",source=attacker["id"],target=victim["id"],damage=0)
-                    self.drop_weapon(attacker,victim);attacker["cooldown"]=max(attacker["cooldown"],.85)
+                    self.try_disarm(victim,attacker,parry=True);attacker["cooldown"]=max(attacker["cooldown"],.85)
                     return
             if attacker["attack"]=="disarm":
-                vulnerable=victim["stamina"]<35 or (victim["cooldown"]>.1 and not victim["block"])
-                if vulnerable and self.drop_weapon(victim,attacker):return
+                if self.try_disarm(attacker,victim):return
                 continue
             multiplier=move["multiplier"]
             base=item["damage"]*multiplier

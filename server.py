@@ -20,7 +20,7 @@ from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from rules import (VERSION,WEAPONS,GEAR,CATALOG,ITEMS,RANGED,PERSISTENT,
-                   complete_account,level_for_xp,xp_for_level,health_price,stability_price,
+                   complete_account,level_for_xp,xp_for_level,health_price,stability_price,grip_price,grip_risk_multiplier,
                    PROGRESSION_VERSION,migrate_progression,public_integer,MOVES)
 from combat import Combat
 from arena_features import ArenaFeatures, SERVER_CAPACITY
@@ -65,6 +65,10 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
             shutil.copy2(self.path,self.path.with_name(self.path.stem+f".pre-progression-{time.time_ns()}.bak"))
             for u in self.users.values():migrate_progression(u);complete_account(u)
             self.save()
+        if any("grip_upgrades" not in u for u in self.users.values()):
+            shutil.copy2(self.path,self.path.with_name(self.path.stem+f".pre-grip-{time.time_ns()}.bak"))
+            for u in self.users.values():complete_account(u)
+            self.save()
         if not self.path.exists(): self.save()
         self.sessions = {}
         session_name = 'sessions.json' if self.path.name == 'accounts.json' else self.path.stem+'.sessions.json'
@@ -101,7 +105,8 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
         result=dict({k:public_integer(user[k]) if k in PERSISTENT else user[k] for k in ("username","inventory","weapon","weapon_slots","shield","armour","helmet","spell",*PERSISTENT)},
                     level=level,max_hp=100+20*user["health_upgrades"],next_level_xp=xp_for_level(level+1),
                     level_start_xp=start,health_upgrade_price=health_price(user["health_upgrades"]),
-                    stability_upgrade_price=stability_price(user["stability_upgrades"]),fall_resistance=1-.4**user["stability_upgrades"],guest=not bool(user["password"]))
+                    stability_upgrade_price=stability_price(user["stability_upgrades"]),fall_resistance=1-.4**user["stability_upgrades"],
+                    grip_upgrade_price=grip_price(user["grip_upgrades"]),disarm_risk_multiplier=grip_risk_multiplier(user["grip_upgrades"]),guest=not bool(user["password"]))
         result.update(next_level_xp=public_integer(next_xp),level_start_xp=public_integer(start),level_progress_xp=public_integer(user["xp"]-start),level_cost_xp=public_integer(next_xp-start),xp_to_next=public_integer(next_xp-user["xp"]),xp_progress=(user["xp"]-start)/(next_xp-start))
         return result
 
@@ -127,10 +132,11 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                  spell_cd=0.,ward=0.,ward_time=0.,slow=0.,disarmed=0.,aim_zone="body",aim_pitch=0.,
                  burn=0.,burn_tick=0.,burn_source="",
                  last_drop=False,last_pickup=False,last_cast=False)
-        f.update(world_id=self.default_world,stability_upgrades=0,balance=100.,fall=0.,fall_duration=1.25,
+        f.update(world_id=self.default_world,stability_upgrades=0,grip_upgrades=0,grip_test_after=0.,balance=100.,fall=0.,fall_duration=1.25,
                  guard_dir="centre",body_yaw=f["yaw"],move_x=0.,move_z=0.,gait=0.,attack_started=0.,attack_windup=.18,attack_duration=.46,
                  queued_attack="",queued_until=0.)
         if bot:
+            f["grip_upgrades"]=max(0,depth-3)
             f["weapon"] = self.rng.choice(["knife", "arming", "sabre", "longsword"])
             if depth >= 4:
                 f["armour"] = "leather"
@@ -322,6 +328,15 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 if item_id not in ITEMS or ITEMS[item_id].get("hidden"):
                     raise ValueError("Unknown item.")
                 item = ITEMS[item_id]
+                if item_id=="grip":
+                    if route!="/shop/buy":raise ValueError("Grip upgrades are purchased.")
+                    price=grip_price(user["grip_upgrades"])
+                    if user["coins"]<price:raise ValueError(f"Grip upgrade costs {price} crowns.")
+                    user["coins"]-=price;user["grip_upgrades"]+=1
+                    fighter=self.fighters.get(s["fighter"])
+                    if fighter:fighter.update(coins=user["coins"],grip_upgrades=user["grip_upgrades"])
+                    if not s["guest"]:self.save()
+                    return dict(profile=self.profile(user),message="Grip improved: disarm risk halved again.")
                 if item_id=="stability":
                     if route!="/shop/buy":raise ValueError("Footing upgrades are purchased.")
                     price=stability_price(user["stability_upgrades"])

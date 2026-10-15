@@ -3,6 +3,7 @@ import json
 import math
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from rules import (ITEMS,PERSISTENT,level_for_xp,xp_for_level,death_penalty)
 
@@ -76,15 +77,15 @@ class ProgressionTests(unittest.TestCase):
         self.arena.strike(self.a)
         self.assertEqual(self.b["stamina"],0)
         self.assertEqual(self.b["hp"],100)
-        self.assertEqual(self.b["xp"],130)
-        self.assertEqual(self.b["skill"],5)
-        self.assertEqual(self.a["weapon"],"fists")
+        self.assertEqual(self.b["xp"],45)
+        self.assertEqual(self.b["skill"],2)
+        self.assertEqual(self.a["weapon"],"longsword")
         self.assertEqual(self.b["parries"],1)
 
     def test_disarm_earns_progress_loses_victim_skill_and_spawns_weapon(self):
-        self.rank(self.b,5);self.b.update(stamina=20,skill=50,weapon="sabre")
+        self.rank(self.b,5);self.b.update(z=1.5,stamina=20,cooldown=.3,skill=50,weapon="sabre")
         self.a["attack"]="disarm"
-        self.arena.strike(self.a)
+        with patch.object(self.arena.rng,'random',return_value=.01):self.arena.strike(self.a)
         self.assertEqual(self.b["weapon"],"fists")
         self.assertEqual(self.arena.drops[0]["weapon"],"sabre")
         self.assertEqual(self.a["xp"],75)
