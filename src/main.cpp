@@ -140,7 +140,7 @@ struct App {
         std::string attack=controls.attack(keys);attackMode=controls.cut;
         if(!controls.easy)guardDir=controls.guard;
         json input={{"move",{std::sin(yaw)*forward+std::cos(yaw)*side,std::cos(yaw)*forward-std::sin(yaw)*side}},
-                    {"yaw",yaw},{"attack",attack},{"block",key(VK_RBUTTON)},{"easy_controls",controls.easy},
+                    {"yaw",yaw},{"attack",attack},{"block",key(VK_RBUTTON)},{"easy_controls",controls.easy},{"auto_cut",controls.primaryAttack},
                     {"dodge",key(VK_SHIFT)},{"jump",key(VK_SPACE)},{"drop",key('G')},{"pickup",key('F')},{"cast",key('B')},
                     {"aim_zone",aimZone},{"aim_pitch",pitch-.28f},{"guard_dir",guardDir},{"revive",key('H')}};
         if(smokeArena){input["move"]={0,0};input["attack"]="";}
@@ -170,7 +170,7 @@ struct App {
         if(world.contains("fighters")){
             float combatTime=animationClock.sample(world.value("time",0.f),time);
             for(auto f:world["fighters"]){std::string id=f.value("id",std::string{});if(positions.count(id)){f["x"]=positions[id].x;f["z"]=positions[id].z;}
-                CombatPose visual=poseTracks[id].sample(pose_input(f,combatTime),f.value("attack_id",0),time);
+                CombatPose visual=poseTracks[id].sample(pose_input(f,combatTime,id==player&&arena&&cameraDistance<.45f),f.value("attack_id",0),time);
                 if(f.value("downed",0.f)>0){f["fall"]=.8;f["fall_duration"]=1.25;}
                 if(id==player&&arena&&cameraDistance<.45f)first_person_arms(canvas,f,yaw,pitch,combatTime,&visual);else fighter(canvas,f,combatTime,id==player,&visual);}
             std::erase_if(poseTracks,[&](const auto& entry){return time-entry.second.lastSeen>.5f;});
@@ -233,7 +233,7 @@ struct App {
         if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.8.2",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.8.3",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});
@@ -327,7 +327,7 @@ struct App {
         json slots=profile.value("weapon_slots",json::array({"knife","","","",""}));
         for(int i=0;i<5;i++){float x=450+i*119;std::string id=i<static_cast<int>(slots.size())?slots[i].get<std::string>():"";bool active=id==heldWeapon&&!id.empty();canvas.rect(x,714,112,54,active?Colour{.38f,.28f,.16f,.94f}:Colour{.04f,.07f,.075f,.90f});canvas.border(x,714,112,54,active?GOLD:Colour{.20f,.27f,.25f});canvas.text(x+10,723,std::to_string(i+1),1.4f,GOLD);canvas.text(x+10,748,id.empty()?"EMPTY":id.substr(0,13),1.05f,WHITE);}
         auto info=item_info(heldWeapon);std::string weaponLabel=heldWeapon=="fists"?"BARE HANDS / F: RECOVER":info.value("name",heldWeapon);canvas.text(450,648,weaponLabel+" / AIM: "+aimZone+" [Z X C]",1.3f,GOLD);
-        const char* moveNames[]={"LEFT CUT","RIGHT CUT","OVERHEAD","THRUST"};canvas.text(450,677,controls.easy?"HOLD LMB: CUT / RMB: BLOCK / MMB: THRUST":std::string("MOVE: ")+moveNames[attackMode]+" / GUARD: "+guardDir,1.2f,MUTED);canvas.text(450,695,"N RISING / K REVERSE SPIN / U POMMEL / L FEINT",1.05f,MUTED);canvas.text(1100,709,"E ARMOURY\nT SCORES\nESC MENU",1.2f,MUTED);
+        const char* moveNames[]={"LEFT CUT","RIGHT CUT","OVERHEAD","THRUST"};canvas.text(450,677,controls.easy?std::string("MOVE: ")+moveNames[attackMode]+" / HOLD LMB / RMB: BLOCK":std::string("MOVE: ")+moveNames[attackMode]+" / GUARD: "+guardDir,1.2f,MUTED);canvas.text(450,695,"N RISING / K REVERSE SPIN / U POMMEL / L FEINT",1.05f,MUTED);canvas.text(1100,709,"E ARMOURY\nT SCORES\nESC MENU",1.2f,MUTED);
         if(!heldSpell.empty())canvas.text(450,622,"B: "+heldSpell+(spellCd>0?" / "+std::to_string(static_cast<int>(std::ceil(spellCd)))+"S":" / READY"),1.3f,{.46f,.74f,.92f});
         float progress=profile.value("xp_progress",0.f);canvas.rect(450,781,589,5,{.16f,.20f,.18f});canvas.rect(450,781,589*std::clamp(progress,0.f,1.f),5,GOLD);
         if(world.contains("events")){float y=106;for(auto& e:world["events"])if(e.value("kind",std::string{})=="kill"&&world.value("time",0.f)-e.value("time",0.f)<8){std::string label=e.value("source",std::string{})+"  /  "+e.value("target",std::string{});canvas.rect(961,y-7,296,26,{.04f,.06f,.06f,.72f});canvas.text(974,y,label,1.2f,MUTED);y+=32;}}

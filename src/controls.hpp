@@ -8,13 +8,14 @@ struct CombatKeys {
     bool rising=false,reverseSpin=false,pommel=false,feint=false;
 };
 struct CombatControls {
-    bool easy=true,leftWasDown=false;
+    bool easy=true,leftWasDown=false,primaryAttack=false;
     int cut=0;
     std::string guard="centre";
     std::string attack(const CombatKeys& k){
+        primaryAttack=false;
         if(easy){
-            // The server alternates completed cuts; walking never changes them.
-            cut=0;guard="centre";
+            cut=k.side<-.1f?0:k.side>.1f?1:k.forward>.1f?2:k.forward<-.1f?3:0;
+            guard="centre";
         }else{
             if(k.side<-.1f)cut=0;else if(k.side>.1f)cut=1;else if(k.forward>.1f)cut=2;else if(k.forward<-.1f)cut=3;
             else if(k.left&&!leftWasDown)cut=cut==0?1:0;
@@ -29,6 +30,7 @@ struct CombatControls {
         if(k.reverseSpin)return "reverse_spin";if(k.rising)return "rising";if(k.pommel)return "pommel";if(k.feint)return "feint";
         if(k.middle){cut=3;return "thrust";}
         if(k.overhead){cut=2;return "overhead";}
+        primaryAttack=easy&&k.left;
         const char* cuts[]={"left","right","overhead","thrust"};
         return k.left?cuts[cut]:"";
     }

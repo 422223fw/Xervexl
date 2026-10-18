@@ -3,7 +3,7 @@ import math
 import sys
 from functools import lru_cache
 
-VERSION = "0.8.2"
+VERSION = "0.8.3"
 PROGRESSION_VERSION = 1
 HEALTH_REGEN_DELAY = 4.
 HEALTH_REGEN_RATE = 2.

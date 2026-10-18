@@ -146,7 +146,13 @@ inline void battlefield_objects(Canvas& c,const json& world,float){
     }
     if(world.contains("ropes")&&world.contains("fighters"))for(const auto& rope:world["ropes"]){json owner;for(const auto& f:world["fighters"])if(f["id"]==rope["owner"]){owner=f;break;}if(owner.is_null())continue;Vec start{owner.value("x",0.f),1.2f,owner.value("z",0.f)},end{rope.value("x",0.f),rope.value("y",1.1f),rope.value("z",0.f)};float grow=std::clamp((world.value("time",0.f)-rope.value("created",0.f))/.25f,0.f,1.f);end=start+(end-start)*grow;for(int i=0;i<12;i++){float a=i/12.f,b=(i+1)/12.f;Vec p=start+(end-start)*a+Vec{0,-std::sin(a*PI)*.3f,0},q=start+(end-start)*b+Vec{0,-std::sin(b*PI)*.3f,0};c.beam(p,q,.018f,{.64f,.50f,.28f});}}
 }
-inline PoseInput pose_input(const json& f,float time){return {f.value("attack",std::string{}),f.value("guard_dir",std::string("centre")),f.value("block",false),time-f.value("attack_started",time),f.value("attack_windup",.18f),f.value("attack_duration",.46f),f.value("aim_zone",std::string("body"))};}
+inline PoseInput pose_input(const json& f,float time,bool firstPerson=false){
+    PoseInput input{f.value("attack",std::string{}),f.value("guard_dir",std::string("centre")),f.value("block",false),time-f.value("attack_started",time),f.value("attack_windup",.18f),f.value("attack_duration",.46f),f.value("aim_zone",std::string("body"))};
+    float yaw=firstPerson||input.block||!input.attack.empty()?f.value("yaw",0.f):f.value("body_yaw",f.value("yaw",0.f));
+    float x=f.value("move_x",0.f),z=f.value("move_z",0.f);
+    input.moveSide=(x*std::cos(yaw)-z*std::sin(yaw))/4.4f;input.moveForward=(x*std::sin(yaw)+z*std::cos(yaw))/4.4f;input.gait=f.value("gait",0.f);
+    return input;
+}
 inline CombatPose pose_for(const json& f,float time){return combat_pose(pose_input(f,time));}
 inline bool two_handed(const json& f){auto weapon=f.value("weapon",std::string{});return f.value("shield",std::string{}).empty()&&(weapon=="longsword"||weapon=="greatsword"||weapon=="katana"||weapon=="spear"||weapon=="halberd");}
 inline void blade_pose(const json& f,float time,Vec p,Vec front,Vec side,float length,Vec& hand,Vec& tip,const CombatPose* visual=nullptr,const Vec* rightRoot=nullptr,const Vec* leftRoot=nullptr){

@@ -22,7 +22,7 @@ inline MoveTiming move_timing(const std::string& move){
     if(move=="disarm")return {.30f,.66f};if(move=="thrust")return {.24f,.58f};if(move=="rising")return {.28f,.66f};
     if(move=="pommel")return {.22f,.52f};if(move=="feint")return {.12f,.32f};return {.24f,.60f};
 }
-struct PoseInput{std::string attack,guard="centre";bool block=false;float age=0,windup=.24f,duration=.60f;std::string aim="body";};
+struct PoseInput{std::string attack,guard="centre";bool block=false;float age=0,windup=.24f,duration=.60f;std::string aim="body";float moveSide=0,moveForward=0,gait=0;};
 struct CombatPose{Vec hand{.30f,1.22f,.31f},direction{-.16f,.78f,.61f};float twist=0,spin=0,lunge=0;};
 inline float angle_delta(float a,float b){return std::remainder(b-a,2*PI);}
 inline float blade_yaw(Vec d){return std::atan2(d.x,d.z);}
@@ -30,6 +30,14 @@ inline float blade_pitch(Vec d){return std::atan2(d.y,std::hypot(d.x,d.z));}
 inline float curve_yaw(Vec d,bool overhead){return overhead&&d.z<0&&d.y>0?std::remainder(blade_yaw(d)+PI,2*PI):blade_yaw(d);}
 inline float curve_pitch(Vec d,bool overhead){return overhead&&d.z<0&&d.y>0?PI-blade_pitch(d):blade_pitch(d);}
 inline Vec blade_direction(float yaw,float pitch){return {std::sin(yaw)*std::cos(pitch),std::sin(pitch),std::cos(yaw)*std::cos(pitch)};}
+inline CombatPose walking_pose(const PoseInput& input){
+    CombatPose pose;pose.direction=norm(pose.direction);
+    float magnitude=std::hypot(input.moveSide,input.moveForward),scale=1/std::max(1.f,magnitude);
+    float side=input.moveSide*scale,forward=input.moveForward*scale,speed=std::min(1.f,magnitude),stride=std::sin(input.gait);
+    pose.hand=pose.hand+Vec{side*.075f+stride*.025f*speed,(.02f+(1-std::cos(input.gait*2))*.012f)*speed,forward*.06f-std::abs(side)*.025f+std::cos(input.gait)*.018f*speed};
+    pose.direction=blade_direction(blade_yaw(pose.direction)+side*.32f+stride*.045f*speed,blade_pitch(pose.direction)-forward*.16f+std::cos(input.gait)*.035f*speed);
+    pose.twist=side*.06f;return pose;
+}
 inline Vec blade_cross_axis(Vec direction,Vec side){
     direction=norm(direction);Vec across=side-direction*dot(side,direction);
     if(dot(across,across)<.00001f)across=cross(direction,std::abs(direction.y)<.9f?Vec{0,1,0}:Vec{0,0,1});
@@ -50,7 +58,7 @@ inline CombatPose pose_segment(const CombatPose& a,const CombatPose& b,float t,f
             hermite(a.twist,b.twist,va.twist,vb.twist,t,span),0,hermite(a.lunge,b.lunge,va.lunge,vb.lunge,t,span)};
 }
 inline CombatPose combat_pose(const PoseInput& input){
-    CombatPose idle;idle.direction=norm(idle.direction);
+    CombatPose idle=walking_pose(input);
     if(input.block){
         CombatPose guard;guard.hand={.10f,1.39f,.44f};
         guard.direction=norm(input.guard=="left"?Vec{-.58f,.78f,.22f}:input.guard=="right"?Vec{.58f,.78f,.22f}:Vec{-.74f,.64f,.20f});
@@ -136,9 +144,13 @@ struct VisualCombatClock{
     }
 };
 struct PoseTransition{
-    CombatPose displayed,from;PoseInput previous;int previousAttack=-1;float changed=0,span=0,lastSeen=0;bool ready=false;
+    CombatPose displayed,from;PoseInput previous;int previousAttack=-1;float changed=0,span=0,lastSeen=0,motionSide=0,motionForward=0,motionGait=0;bool ready=false;
     CombatPose sample(const PoseInput& input,int attackId,float localTime){
-        CombatPose target=combat_pose(input);lastSeen=localTime;
+        float dt=std::clamp(localTime-lastSeen,0.f,.1f);lastSeen=localTime;
+        if(!ready){motionSide=input.moveSide;motionForward=input.moveForward;motionGait=input.gait;}
+        else{float blend=1-std::exp(-dt*16);motionSide+=(input.moveSide-motionSide)*blend;motionForward+=(input.moveForward-motionForward)*blend;motionGait+=(input.gait-motionGait)*blend;}
+        PoseInput visual=input;visual.moveSide=motionSide;visual.moveForward=motionForward;visual.gait=motionGait;
+        CombatPose target=combat_pose(visual);
         if(!ready){ready=true;previous=input;previousAttack=attackId;displayed=target;return target;}
         bool changedState=input.block!=previous.block||(input.block&&input.guard!=previous.guard)||input.attack!=previous.attack||attackId!=previousAttack;
         if(changedState){

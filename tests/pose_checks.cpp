@@ -93,5 +93,35 @@ int main(){
     assert(clock.sample(10,3)==clock.sample(10,2)); // Freeze stale-state extrapolation.
     assert(clock.sample(10.06f,3.01f)>=b);
     assert(clock.sample(0,3.02f)==0); // A restarted backend has a new clock origin.
+    // Eight movement directions, a full gait cycle and both attached grips.
+    for(int direction=0;direction<8;direction++)for(int frame=0;frame<=360;frame++){
+        PoseInput input;input.moveSide=std::sin(direction*PI/4);input.moveForward=std::cos(direction*PI/4);input.gait=frame*PI/180;
+        auto pose=combat_pose(input);
+        assert(dot(pose.hand-idle.hand,pose.hand-idle.hand)<.025f);
+        assert(std::abs(dot(pose.direction,pose.direction)-1)<.00001f);
+        Vec right{.34f*std::cos(pose.twist),1.43f,-.34f*std::sin(pose.twist)},left{-right.x,1.43f,-right.z};
+        auto grip=weapon_grip(pose.hand,pose.direction,right,left,1.5f,true);
+        assert(dot(grip.hand-right,grip.hand-right)<=.7001f*.7001f&&dot(grip.offhand-left,grip.offhand-left)<=.7001f*.7001f);
+        assert(std::abs(dot(grip.tip-grip.hand,grip.tip-grip.hand)-2.25f)<.00001f);
+        for(const std::string move:{"left","right","overhead","thrust"}){
+            auto timing=move_timing(move);input.attack=move;input.age=timing.windup;input.windup=timing.windup;input.duration=timing.duration;
+            auto movingContact=combat_pose(input),standingContact=combat_pose({move,"centre",false,timing.windup,timing.windup,timing.duration});
+            assert(dot(movingContact.hand-standingContact.hand,movingContact.hand-standingContact.hand)<.000001f);
+            assert(dot(movingContact.direction-standingContact.direction,movingContact.direction-standingContact.direction)<.000001f);
+        }
+        checked++;
+    }
+    PoseInput leftWalk,rightWalk,forwardWalk,backWalk;leftWalk.moveSide=-1;rightWalk.moveSide=1;forwardWalk.moveForward=1;backWalk.moveForward=-1;
+    assert(combat_pose(leftWalk).direction.x<combat_pose(rightWalk).direction.x);
+    assert(combat_pose(forwardWalk).hand.z>combat_pose(backWalk).hand.z);
+    PoseInput walkingGuard=leftWalk;walkingGuard.block=true;walkingGuard.guard="up";
+    assert(dot(combat_pose(walkingGuard).hand-combat_pose({"","up",true}).hand,combat_pose(walkingGuard).hand-combat_pose({"","up",true}).hand)<.000001f);
+    PoseTransition walking;
+    auto last=walking.sample(leftWalk,0,0);
+    for(int frame=1;frame<=60;frame++){
+        auto pose=walking.sample(frame<30?rightWalk:PoseInput{},0,frame/60.f);
+        assert(dot(pose.hand-last.hand,pose.hand-last.hand)<.002f);last=pose;
+    }
+    assert(dot(last.hand-idle.hand,last.hand-idle.hand)<.000001f);
     std::cout<<checked<<" animation samples passed, plus contact velocity, attached two-hand grips, guard cancellation and bounded visual-clock checks.\n";
 }

@@ -134,7 +134,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                  last_drop=False,last_pickup=False,last_cast=False)
         f.update(world_id=self.default_world,stability_upgrades=0,grip_upgrades=0,grip_test_after=0.,balance=100.,fall=0.,fall_duration=1.25,
                  guard_dir="centre",body_yaw=f["yaw"],move_x=0.,move_z=0.,gait=0.,attack_started=0.,attack_windup=.18,attack_duration=.46,
-                 queued_attack="",queued_until=0.)
+                 queued_attack="",queued_until=0.,queued_auto_cut=False)
         if bot:
             f["grip_upgrades"]=max(0,depth-3)
             f["weapon"] = self.rng.choice(["knife", "arming", "sabre", "longsword"])
@@ -405,6 +405,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                                       aim_zone=body.get("aim_zone") if body.get("aim_zone") in ("head","body","legs") else "body")
                     f["input"]["guard_dir"]=body.get("guard_dir") if body.get("guard_dir") in ("left","right","up","centre") else "centre"
                     f["input"]["easy_controls"]=bool(body.get("easy_controls"))
+                    f["input"]["auto_cut"]=bool(body.get('auto_cut',f['input']['attack'] in ('left','right'))) and f['input']['attack'] in ('left','right','overhead','thrust')
                     try:
                         pitch=float(body.get("aim_pitch",0))
                         if not math.isfinite(pitch):raise ValueError()
@@ -528,23 +529,25 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                     f["z"] *= 38/radius
                 f["stamina"] = min(100.,f["stamina"]+dt*(8 if f["block"] else 18))
                 pressed = inp.get("attack", "")
-                if easy and not pressed and f.get('queued_repeat'):
+                automatic=easy and bool(inp.get('auto_cut',pressed in ('left','right'))) and pressed in ('left','right','overhead','thrust')
+                if easy and not automatic and f.get('queued_repeat'):
                     f['queued_attack']='';f['queued_repeat']=False
-                repeat=easy and pressed in ('left','right') and f['cooldown']<=.20
+                repeat=automatic and f['cooldown']<=.20
                 if pressed and (not f["last_attack"] or repeat) and not f["block"] and f["disarmed"]<=0:
                     f["queued_attack"]=pressed;f["queued_until"]=self.clock+.25
                     f['queued_repeat']=bool(repeat and f['last_attack'])
+                    f['queued_auto_cut']=automatic
                 if f["queued_until"]<self.clock:f["queued_attack"]=""
                 attack = f["queued_attack"]
                 ranged=ITEMS[f["weapon"]]["family"] in RANGED
                 if attack in ('spin','reverse_spin','rising','pommel','feint') and (ranged or ITEMS[f["weapon"]]["family"]=="rope"):
                     attack="";f["queued_attack"]=""
+                if attack and easy and f.get('queued_auto_cut') and not f['block']:
+                    attack='left' if ranged or ITEMS[f['weapon']]['family']=='rope' else self.walking_cut(f,inp)
                 move=MOVES.get(attack,MOVES["left"])
                 cost = 18 if ITEMS[f["weapon"]]["family"]=="rope" else 10 if ranged else move["cost"]
                 if attack and f["cooldown"]<=0 and f["stamina"]>=cost and not f["block"] and f["disarmed"]<=0:
-                    if easy and attack in ('left','right') and not ranged:
-                        attack='right' if f.get('last_easy_cut')=='left' else 'left'
-                        f['last_easy_cut']=attack
+                    if easy and f.get('queued_auto_cut') and attack in ('left','right') and not ranged:f['last_easy_cut']=attack
                     f["attack"] = attack
                     f["attack_id"] += 1
                     f["windup"] = move["windup"]
@@ -576,6 +579,16 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
             self.learning_tick()
             self.tick_modes(dt)
             for f in self.fighters.values():self.regenerate_health(f,dt)
+
+    def walking_cut(self,f,inp):
+        """Primary cuts follow movement relative to aim, sampled at attack start."""
+        x,z=inp.get('move',[0,0]);yaw=f['yaw']
+        side=x*math.cos(yaw)-z*math.sin(yaw);forward=x*math.sin(yaw)+z*math.cos(yaw)
+        if side<-.1:return 'left'
+        if side>.1:return 'right'
+        if forward>.1:return 'overhead'
+        if forward<-.1:return 'thrust'
+        return 'right' if f.get('last_easy_cut')=='left' else 'left'
 
     def easy_guard(self,f):
         """Choose only the guard pose; looking and pressing block stay manual."""
