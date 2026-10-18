@@ -3,8 +3,10 @@ import math
 import sys
 from functools import lru_cache
 
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 PROGRESSION_VERSION = 1
+HEALTH_REGEN_DELAY = 4.
+HEALTH_REGEN_RATE = 2.
 # Authoritative XP can grow beyond the interpreter's default decimal digit limit.
 if hasattr(sys,"set_int_max_str_digits"):sys.set_int_max_str_digits(0)
 

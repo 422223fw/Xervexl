@@ -1,4 +1,4 @@
-# Xervexl 0.8.1 — progression and combat rules
+# Xervexl 0.8.2 — progression and combat rules
 
 Official round victories grant **650 XP, 350 crowns and 25 skill** once per registered member of the winning round roster. Eliminated/disconnected squad members are included. Moving to another arena cannot erase the award on the next progress sync. Winning bots receive the same bonus for their current character. The endless arena keeps its existing kill/death economy and has no final winner.
 
@@ -33,6 +33,8 @@ Rank 2 requires **79 additional XP**. Every following rank costs the previous ra
 For rank L ≥ 2, the additional cost is **79 × L! / 2**. Total XP is the sum of the costs through that rank. There is no configured maximum rank. Authoritative XP uses arbitrary-precision integers; huge public values travel as decimal strings and the native interface displays them in compact scientific notation. Existing accounts receive a one-time, backed-up conversion from the former 75 × L × (L − 1) curve that preserves earned rank and proportional progress, instead of dropping their ranks when the formula changes. Credentials, equipment, coins and skill are preserved. Bots receive shuffled AI depths 2–5 and randomized starting ranks, then gain XP and lose skill under the same combat rules. Bot progress lasts for their current server life; registered accounts persist across server restarts.
 
 Every elimination immediately restores the living killer to **their full maximum health, including permanent health upgrades, and 100 stamina**. This applies to players and bots, including melee, ranged, magic, burning and reflected-arrow kills. Nonlethal hits do not restore either resource. A posthumous kill still earns its rewards but does not revive a dead shooter.
+
+Living fighters also recover **2 HP/second after four seconds without damage**, capped at their existing maximum health. The server counts only the part of a tick after that delay; another damaging hit restarts it. Blocking an entire hit does not interrupt recovery. Burning prevents recovery, and survival-circle damage resets the wait. Dead, downed or eliminated fighters and inactive round lobbies cannot regenerate. A squad revive restores half health and begins a fresh four-second wait. Players and bots share this rule. Passive healing grants no XP, skill, crowns or permanent maximum-health increase, and clients cannot submit healing rates or health values.
 
 Leaderboards cover skill, rank, XP, current crowns and eliminations. They include registered accounts on this server and active combatants, with BOT/PLAYER labels. They do not aggregate independent internet servers. Playing requires a registered account; the old guest endpoint is disabled.
 

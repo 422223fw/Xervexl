@@ -21,7 +21,7 @@ struct App {
     std::map<std::string,Vec> positions;
     std::map<std::string,PoseTransition> poseTracks;VisualCombatClock animationClock;
     json world,profile,catalog,boards,worlds;std::string player,status,error,notice;bool connected=false,busy=false,savedLogin=false,restoringLogin=false;
-    float hp=100,maxHp=100,stamina=100,death=0,spawnSafe=0,spellCd=0;int kills=0,coins=100,level=1,skill=0;std::string xp="0";
+    float hp=100,maxHp=100,stamina=100,death=0,spawnSafe=0,spellCd=0,healthRegen=0;int kills=0,coins=100,level=1,skill=0;std::string xp="0";
     int shopCategory=0,shopPage=0,leaderTab=0,seenEvent=0;float lastBoards=-10,lastWorlds=-10;std::string aimZone="body",heldWeapon="knife",heldSpell;
     bool automatic=true,switchSmoke=false;int switchStep=0;std::vector<std::string> seenApis;
     bool smoke=false,smokeArena=false;std::string screenshot;
@@ -103,7 +103,7 @@ struct App {
         if(!self.is_null()){
             if(alignedPlayer!=player){yaw=std::atan2(-self.value("x",0.f),-self.value("z",0.f));alignedPlayer=player;seenEvent=0;}
             float current=self.value("hp",100.f);if(current<hp)damageUntil=time+.22f;hp=current;stamina=self.value("stamina",100.f);death=self.value("dead",0.f);
-            spawnSafe=self.value("spawn_safe",0.f);
+            spawnSafe=self.value("spawn_safe",0.f);healthRegen=self.value("regen_rate",0.f);
             maxHp=self.value("max_hp",100.f);heldWeapon=self.value("weapon",std::string("knife"));heldSpell=self.value("spell",std::string{});spellCd=self.value("spell_cd",0.f);
             if(controls.easy)guardDir=self.value("guard_dir",std::string("centre"));
             if(death>0&&!wasDead)PlaySoundA("assets/fall.wav",nullptr,SND_FILENAME|SND_ASYNC|SND_NODEFAULT);
@@ -233,7 +233,7 @@ struct App {
         if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.8.1",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.8.2",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});
@@ -321,7 +321,7 @@ struct App {
             canvas.text(440,598,heldWeapon=="fists"?"PICK UP AND EQUIP YOUR BLADE":"PICK UP / CURRENT WEAPON DROPS",1.05f,MUTED);
         }
         canvas.rect(28,657,370,112,{.035f,.055f,.058f,.94f});canvas.text(47,673,profile.value("username",std::string("FIGHTER")),1.6f,WHITE);
-        canvas.text(47,701,"HEALTH",1.1f,MUTED);canvas.rect(132,700,239,12,{.16f,.20f,.18f});canvas.rect(132,700,239*hp/maxHp,12,{.62f,.26f,.19f});canvas.text(263,672,std::to_string(static_cast<int>(hp))+" / "+std::to_string(static_cast<int>(maxHp)),1.2f,MUTED);
+        canvas.text(47,701,healthRegen>0?"REGEN +2":"HEALTH",1.1f,healthRegen>0?Colour{.44f,.80f,.49f}:MUTED);canvas.rect(132,700,239,12,{.16f,.20f,.18f});canvas.rect(132,700,239*hp/maxHp,12,healthRegen>0?Colour{.31f,.64f,.38f}:Colour{.62f,.26f,.19f});canvas.text(263,672,std::to_string(static_cast<int>(hp))+" / "+std::to_string(static_cast<int>(maxHp)),1.2f,MUTED);
         canvas.text(47,728,"STAMINA",1.1f,MUTED);canvas.rect(132,727,239,9,{.16f,.20f,.18f});canvas.rect(132,727,239*stamina/100,9,GOLD);
         canvas.text(47,752,std::to_string(kills)+" ELIMINATIONS / "+std::to_string(coins)+" CROWNS",1.15f,MUTED);
         json slots=profile.value("weapon_slots",json::array({"knife","","","",""}));

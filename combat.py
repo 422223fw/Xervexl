@@ -2,7 +2,8 @@
 import math
 import secrets
 from rules import (ITEMS,RANGED,TARGET_HEIGHTS,BODY_MULTIPLIERS,PERSISTENT,
-                   level_for_xp,kill_reward,death_penalty,zone_from_height,public_integer,MOVES,grip_risk_multiplier)
+                   level_for_xp,kill_reward,death_penalty,zone_from_height,public_integer,MOVES,grip_risk_multiplier,
+                   HEALTH_REGEN_DELAY,HEALTH_REGEN_RATE)
 
 
 def angle(a): return (a+math.pi)%math.tau-math.pi
@@ -52,6 +53,17 @@ class Combat:
     def lift(self,f):
         remaining=f["jump"]
         return math.sin((.55-remaining)/.55*math.pi)*.65 if remaining>0 else 0.
+
+    def regenerate_health(self,f,dt):
+        """Recover only the elapsed unhurt part of this tick; never revive."""
+        f['regen_rate']=0.
+        match=self.match_for(f)
+        if (dt<=0 or f['dead']>0 or f.get('downed',0)>0 or f.get('eliminated') or
+                f['hp']<=0 or f['hp']>=f['max_hp'] or f['burn']>0 or match and match['phase']!='playing'):return
+        elapsed=max(0.,min(dt,self.clock-f.get('last_hurt',self.clock)-HEALTH_REGEN_DELAY))
+        if elapsed<=0:return
+        f['hp']=min(f['max_hp'],f['hp']+HEALTH_REGEN_RATE*elapsed)
+        f['regen_rate']=HEALTH_REGEN_RATE if f['hp']<f['max_hp'] else 0.
 
     def try_disarm(self,disarmer,victim,parry=False):
         """Rare blade contact against an exhausted grip; failed pulls earn nothing."""
@@ -122,7 +134,7 @@ class Combat:
     def damage(self,attacker,victim,base,zone,kind="hit",magic="",pierce=0.,learning_ticket=None):
         if victim["dead"]>0 or victim["spawn_safe"]>0 or attacker["spawn_safe"]>0 or not self.can_fight(attacker,victim):return
         if victim.get('downed',0)>0:
-            victim['down_hp']-=max(0,base);victim['last_hurt']=self.clock
+            victim['down_hp']-=max(0,base);victim['last_hurt']=self.clock;victim['regen_rate']=0.
             if victim['down_hp']<=0:self.finish_kill(self.fighters.get(victim.get('downer','')) or attacker,victim,zone)
             return
         armour=ITEMS.get(victim["armour"],{}).get("reduction",0)*(1-pierce)
@@ -131,7 +143,7 @@ class Combat:
         absorbed=min(victim["ward"],amount);victim["ward"]-=absorbed;amount-=absorbed
         actual=min(victim['hp'],amount)
         victim["hp"]=max(0.,victim["hp"]-amount)
-        if amount>0:victim['last_hurt']=self.clock
+        if amount>0:victim['last_hurt']=self.clock;victim['regen_rate']=0.
         downed=victim['hp']<=0 and self.mode_down(victim,attacker)
         if downed:actual=max(0,actual-1)
         ticket=learning_ticket if learning_ticket is not None else attacker.get('attack_learning') if kind=='hit' else None
@@ -158,7 +170,7 @@ class Combat:
             actual_loss=min(victim["skill"],penalty)
             self.grant(attacker,**reward)
             if attacker["dead"]<=0 and attacker.get('downed',0)<=0:
-                attacker.update(hp=attacker["max_hp"],stamina=100.)
+                attacker.update(hp=attacker["max_hp"],stamina=100.,regen_rate=0.)
             self.grant(victim,skill=-penalty)
             self.emit("kill",source=attacker["name"],target=victim["name"],source_id=attacker["id"],target_id=victim["id"],
                       xp=reward["xp"],skill=reward["skill"],coins=reward["coins"],lost_skill=actual_loss)

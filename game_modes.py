@@ -255,7 +255,7 @@ class GameModes:
                     if rescuer and self.clock-f.get('last_hurt',-999)>.25:
                         f['revive_progress']=f.get('revive_progress',0)+dt if f.get('reviver')==rescuer['id'] else dt;f['reviver']=rescuer['id']
                         if f['revive_progress']>=3:
-                            f.update(downed=0.,hp=f['max_hp']*.5,stamina=50.,spawn_safe=1.,revive_progress=0.,reviver='',fall=0.,balance=50.,burn=0.)
+                            f.update(downed=0.,hp=f['max_hp']*.5,stamina=50.,spawn_safe=1.,revive_progress=0.,reviver='',fall=0.,balance=50.,burn=0.,last_hurt=self.clock,regen_rate=0.)
                             self.grant(rescuer,xp=20,skill=1);self.script_event('revive',rescuer)
                             self.emit('revive',source=rescuer['id'],target=f['id']);continue
                     else:f.update(revive_progress=0.,reviver='')
@@ -266,6 +266,7 @@ class GameModes:
                 for f in active:
                     if f['dead']<=0 and math.hypot(f['x'],f['z'])>radius:
                         f['hp']-=dt*10
+                        f['last_hurt']=self.clock
                         if f['hp']<=0:
                             if not self.mode_down(f,None):self.finish_kill(None,f)
                 teams={f['team'] for f in actors if not f.get('eliminated') and f['dead']<=0 and f.get('downed',0)<=0}

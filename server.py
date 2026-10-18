@@ -130,7 +130,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                  input={}, last_input=0., last_attack=False, last_dodge=False, last_jump=False, plan_at=0., action="advance")
         f.update(xp=0,level=1,skill=0,coins=100,parries=0,disarms=0,health_upgrades=0,max_hp=100.,helmet="",spell="",
                  spell_cd=0.,ward=0.,ward_time=0.,slow=0.,disarmed=0.,aim_zone="body",aim_pitch=0.,
-                 burn=0.,burn_tick=0.,burn_source="",
+                 burn=0.,burn_tick=0.,burn_source="",last_hurt=self.clock,regen_rate=0.,
                  last_drop=False,last_pickup=False,last_cast=False)
         f.update(world_id=self.default_world,stability_upgrades=0,grip_upgrades=0,grip_test_after=0.,balance=100.,fall=0.,fall_duration=1.25,
                  guard_dir="centre",body_yaw=f["yaw"],move_x=0.,move_z=0.,gait=0.,attack_started=0.,attack_windup=.18,attack_duration=.46,
@@ -416,7 +416,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 for a in self.fighters.values():
                     if a["world_id"]!=room:continue
                     public.append({k:public_integer(a[k]) if k in ("xp","skill","coins","kills","deaths","level") else a[k] for k in ("id","name","bot","depth","x","z","yaw","hp","max_hp","stamina","weapon","shield","armour","helmet","spell","kills","deaths","block","jump","dodge","dead","attack","attack_id","windup","spawn_safe","level","xp","skill","coins","disarmed","spell_cd","ward","slow","cooldown","world_id","body_yaw","move_x","move_z","gait","guard_dir","attack_started","attack_windup","attack_duration","aim_zone","balance","fall","fall_duration")})
-                    public[-1].update(team=a.get('team',-1),downed=a.get('downed',0.),eliminated=bool(a.get('eliminated',False)),revive_progress=a.get('revive_progress',0.),match_score=a.get('match_score',0),match_xp=a.get('match_xp',0),match_coins=a.get('match_coins',0))
+                    public[-1].update(team=a.get('team',-1),downed=a.get('downed',0.),eliminated=bool(a.get('eliminated',False)),revive_progress=a.get('revive_progress',0.),match_score=a.get('match_score',0),match_xp=a.get('match_xp',0),match_coins=a.get('match_coins',0),regen_rate=a['regen_rate'])
                 return dict(player=s["fighter"], time=self.clock, fighters=public, events=[e for e in self.events if e.get("world_id",room)==room][-12:],
                             pickup=self.pickup_hint(f) if f else {},revive=self.revive_hint(f),match=self.match_state(room),
                             profile=self.profile(user),humans=sum(not a["bot"] for a in public),bots=sum(a["bot"] for a in public),
@@ -458,7 +458,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                         f["dead"] = 0
                         angle = self.rng.random()*math.tau
                         f.update(x=math.sin(angle)*18,z=math.cos(angle)*18,hp=f["max_hp"],stamina=100.,cooldown=0.,windup=0.,attack="",block=False,spawn_safe=1.5,
-                                 weapon=f["loadout_weapon"],disarmed=0.,ward=0.,slow=0.,burn=0.,last_attack=False,fall=0.,balance=100.,queued_attack="")
+                                 weapon=f["loadout_weapon"],disarmed=0.,ward=0.,slow=0.,burn=0.,last_attack=False,fall=0.,balance=100.,queued_attack="",last_hurt=self.clock,regen_rate=0.)
                         if self.match_for(f):self.place_squad(f)
                     continue
                 if f["bot"]: inp = self.bot_input(f)
@@ -575,6 +575,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                             b["x"] += dx/dist*push; b["z"] += dz/dist*push
             self.learning_tick()
             self.tick_modes(dt)
+            for f in self.fighters.values():self.regenerate_health(f,dt)
 
     def easy_guard(self,f):
         """Choose only the guard pose; looking and pressing block stay manual."""
