@@ -26,8 +26,8 @@ class ProgressionTests(unittest.TestCase):
         self.a=self.arena.fighters[self.arena.sessions[self.tokens[0]]["fighter"]]
         self.b=self.arena.fighters[self.arena.sessions[self.tokens[1]]["fighter"]]
         self.arena.fighters={self.a["id"]:self.a,self.b["id"]:self.b}
-        self.a.update(x=0,z=0,yaw=0,spawn_safe=0,weapon="longsword",attack="left")
-        self.b.update(x=0,z=2,yaw=math.pi,spawn_safe=0)
+        self.a.update(x=0,z=0,yaw=0,body_yaw=0,spawn_safe=0,weapon="longsword",attack="left")
+        self.b.update(x=0,z=2,yaw=math.pi,body_yaw=math.pi,spawn_safe=0)
 
     def tearDown(self):self.temp.cleanup()
 
@@ -73,7 +73,7 @@ class ProgressionTests(unittest.TestCase):
 
     def test_perfect_parry_costs_zero_stamina_and_earns_progress(self):
         self.rank(self.a,6)
-        self.b.update(block=True,block_since=self.arena.clock,stamina=0)
+        self.b.update(block=True,guard_dir='right',block_since=self.arena.clock,stamina=0)
         self.arena.strike(self.a)
         self.assertEqual(self.b["stamina"],0)
         self.assertEqual(self.b["hp"],100)
@@ -107,8 +107,8 @@ class ProgressionTests(unittest.TestCase):
     def test_hit_region_changes_damage_and_no_full_health_one_shot(self):
         self.a["weapon"]="knife";self.b["z"]=1.2;losses={}
         for zone in ("head","body","legs"):
-            self.a["aim_zone"]=zone;self.b["hp"]=100
-            self.arena.strike(self.a);losses[zone]=100-self.b["hp"]
+            self.b["hp"]=100
+            self.arena.damage(self.a,self.b,ITEMS['knife']['damage'],zone);losses[zone]=100-self.b["hp"]
         self.assertGreater(losses["head"],losses["body"])
         self.assertGreater(losses["body"],losses["legs"])
         self.a.update(weapon="sunblade",attack="overhead",aim_zone="head");self.b["hp"]=100
@@ -142,7 +142,7 @@ class ProgressionTests(unittest.TestCase):
         self.assertEqual((self.b["hp"],self.b["stamina"]),(100,100))
 
     def test_ordinary_shield_block_reduces_projectile_damage(self):
-        self.a["weapon"]="crossbow";self.b.update(z=5,block=True,block_since=-999,shield="kite")
+        self.a["weapon"]="crossbow";self.b.update(z=5,block=True,guard_dir='right',block_since=-999,shield="kite")
         self.arena.shoot(self.a,ITEMS["crossbow"]);self.arena.tick_objects(.2)
         self.assertGreater(self.b["hp"],85)
         self.assertLess(self.b["hp"],100)

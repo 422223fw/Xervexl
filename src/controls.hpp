@@ -15,14 +15,13 @@ struct CombatControls {
         primaryAttack=false;
         if(easy){
             cut=k.side<-.1f?0:k.side>.1f?1:k.forward>.1f?2:k.forward<-.1f?3:0;
-            guard="centre";
         }else{
             if(k.side<-.1f)cut=0;else if(k.side>.1f)cut=1;else if(k.forward>.1f)cut=2;else if(k.forward<-.1f)cut=3;
             else if(k.left&&!leftWasDown)cut=cut==0?1:0;
-            guard=k.side<-.1f?"left":k.side>.1f?"right":k.forward>.1f?"up":k.forward<-.1f?"centre":guard;
-            if(k.right&&k.forward==0&&k.side==0&&(std::abs(k.mouseX)>3||std::abs(k.mouseY)>3))
-                guard=std::abs(k.mouseX)>std::abs(k.mouseY)?(k.mouseX<0?"left":"right"):(k.mouseY<0?"up":"centre");
         }
+        guard=k.side<-.1f?"left":k.side>.1f?"right":k.forward>.1f?"up":k.forward<-.1f?"centre":guard;
+        if(k.right&&(std::abs(k.mouseX)>3||std::abs(k.mouseY)>3))
+            guard=std::abs(k.mouseX)>std::abs(k.mouseY)?(k.mouseX<0?"left":"right"):(k.mouseY<0?"up":"centre");
         leftWasDown=k.left;
         if(k.right)return {}; // Block wins and clears any queued attack.
         if(k.disarm)return "disarm";

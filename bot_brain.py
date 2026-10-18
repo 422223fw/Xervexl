@@ -52,7 +52,7 @@ class BotBrain:
                                 if ranged:damage*=max(.25,1-d/(own['reach']*1.5))*(.55 if math.hypot(opponent['move_x'],opponent['move_z'])>2 else 1)
                                 elif opponent['block']:
                                     expected={'left':'right','right':'left','overhead':'up','thrust':'centre'}[action]
-                                    if opponent['guard_dir']==expected or opponent['guard_dir']=='centre' and action!='overhead':damage=0
+                                    if opponent['guard_dir']==expected:damage=0
                                     else:damage*=.65
                                 e-=min(75.,damage)
                         own_cd=max(MOVES[action]['windup']+MOVES[action]['follow']+.02,own['cooldown']+(.18 if action=='overhead' else 0))

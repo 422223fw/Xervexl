@@ -3,6 +3,7 @@ build/
 tools/*
 !tools/make_audio.py
 !tools/make_shaders.py
+!tools/export_combat_geometry.cpp
 __pycache__/
 *.log
 .env

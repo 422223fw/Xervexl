@@ -23,6 +23,7 @@ from rules import (VERSION,WEAPONS,GEAR,CATALOG,ITEMS,RANGED,PERSISTENT,
                    complete_account,level_for_xp,xp_for_level,health_price,stability_price,grip_price,grip_risk_multiplier,
                    PROGRESSION_VERSION,migrate_progression,public_integer,MOVES)
 from combat import Combat
+import hitboxes as hb
 from arena_features import ArenaFeatures, SERVER_CAPACITY
 from bot_brain import BotBrain
 from bot_learning import BotLearning, LearningCombat
@@ -133,7 +134,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                  burn=0.,burn_tick=0.,burn_source="",last_hurt=self.clock,regen_rate=0.,
                  last_drop=False,last_pickup=False,last_cast=False)
         f.update(world_id=self.default_world,stability_upgrades=0,grip_upgrades=0,grip_test_after=0.,balance=100.,fall=0.,fall_duration=1.25,
-                 guard_dir="centre",body_yaw=f["yaw"],move_x=0.,move_z=0.,gait=0.,attack_started=0.,attack_windup=.18,attack_duration=.46,
+                 guard_dir="centre",guard_changed=-999.,guard_from=[],body_yaw=f["yaw"],move_x=0.,move_z=0.,gait=0.,attack_started=0.,attack_windup=.24,attack_duration=.60,
                  queued_attack="",queued_until=0.,queued_auto_cut=False)
         if bot:
             f["grip_upgrades"]=max(0,depth-3)
@@ -417,9 +418,10 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 for a in self.fighters.values():
                     if a["world_id"]!=room:continue
                     public.append({k:public_integer(a[k]) if k in ("xp","skill","coins","kills","deaths","level") else a[k] for k in ("id","name","bot","depth","x","z","yaw","hp","max_hp","stamina","weapon","shield","armour","helmet","spell","kills","deaths","block","jump","dodge","dead","attack","attack_id","windup","spawn_safe","level","xp","skill","coins","disarmed","spell_cd","ward","slow","cooldown","world_id","body_yaw","move_x","move_z","gait","guard_dir","attack_started","attack_windup","attack_duration","aim_zone","balance","fall","fall_duration")})
-                    public[-1].update(team=a.get('team',-1),downed=a.get('downed',0.),eliminated=bool(a.get('eliminated',False)),revive_progress=a.get('revive_progress',0.),match_score=a.get('match_score',0),match_xp=a.get('match_xp',0),match_coins=a.get('match_coins',0),regen_rate=a['regen_rate'])
+                    public[-1].update(team=a.get('team',-1),downed=a.get('downed',0.),eliminated=bool(a.get('eliminated',False)),revive_progress=a.get('revive_progress',0.),match_score=a.get('match_score',0),match_xp=a.get('match_xp',0),match_coins=a.get('match_coins',0),regen_rate=a['regen_rate'],guard_changed=a['guard_changed'],guard_from=a['guard_from'])
                 return dict(player=s["fighter"], time=self.clock, fighters=public, events=[e for e in self.events if e.get("world_id",room)==room][-12:],
                             pickup=self.pickup_hint(f) if f else {},revive=self.revive_hint(f),match=self.match_state(room),
+                            hitboxes=[hb.debug_actor(a,self.clock) for a in self.fighters.values() if a['world_id']==room and a['dead']<=0 and (not f or math.hypot(a['x']-f['x'],a['z']-f['z'])<14)] if body.get('debug_hitboxes') else [],
                             profile=self.profile(user),humans=sum(not a["bot"] for a in public),bots=sum(a["bot"] for a in public),
                             drops=[d for d in self.drops if d["world_id"]==room],projectiles=[{k:v for k,v in p.items() if not k.startswith('_')} for p in self.projectiles if p["world_id"]==room],
                             ropes=[r for r in self.ropes if r["world_id"]==room],world=self.world_info(room))
@@ -451,6 +453,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
             self.maintain_bots()
             self._planning_slots={f['id'] for f in sorted((a for a in self.fighters.values() if a['bot']),key=lambda a:a['plan_at'])[:12]} if len(self.fighters)>40 else None
             self.prepare_bot_frame()
+            pending=[]
             for f in list(self.fighters.values()):
                 if f.get('eliminated'):continue
                 if f["dead"] > 0:
@@ -492,9 +495,11 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 f["dodge"] = max(0.,f["dodge"]-dt)
                 f["jump"] = max(0.,f["jump"]-dt)
                 was_blocking = f["block"]
-                old_guard=f["guard_dir"];f["guard_dir"]=inp.get("guard_dir","centre")
+                old_guard=f["guard_dir"];new_guard=inp.get('guard_dir','centre')
+                if inp.get('block') and f['disarmed']<=0 and (not was_blocking or old_guard!=new_guard):
+                    f['guard_from']=hb.guard_origin(f,self.clock);f['guard_changed']=self.clock
+                f['guard_dir']=new_guard
                 easy=not f['bot'] and inp.get('easy_controls',False)
-                if easy and inp.get('block'):f['guard_dir']=self.easy_guard(f)
                 f["block"] = bool(inp.get("block")) and f["disarmed"]<=0
                 if f["block"]:
                     f["queued_attack"]=""
@@ -502,7 +507,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                         ticket=f.get('attack_learning')
                         if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
                         f["windup"]=0.;f["attack"]="";f["cooldown"]=min(f["cooldown"],.12)
-                    if not was_blocking or not easy and old_guard!=f["guard_dir"]:f["block_since"]=self.clock
+                    if not was_blocking:f["block_since"]=self.clock
                 if inp.get("dodge") and not f["last_dodge"] and f["stamina"] >= 24 and f["dodge"]<=0:
                     f["dodge"] = .32
                     f["stamina"] -= 24
@@ -550,6 +555,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                     if easy and f.get('queued_auto_cut') and attack in ('left','right') and not ranged:f['last_easy_cut']=attack
                     f["attack"] = attack
                     f["attack_id"] += 1
+                    f['melee_targets']=set()
                     f["windup"] = move["windup"]
                     f["attack_started"]=self.clock;f["attack_windup"]=f["windup"];f["attack_duration"]=f["windup"]+move["follow"]
                     f["cooldown"] = max(f["attack_duration"]+.02,ITEMS[f["weapon"]]["cooldown"] + (0 if ranged else .18 if attack == "overhead" else -.05 if attack == "thrust" else 0))
@@ -560,8 +566,13 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 f["last_attack"] = bool(pressed)
                 if f["windup"] > 0:
                     f["windup"] = max(0.,f["attack_started"]+f["attack_windup"]-self.clock)
-                    if f["windup"] <= 0: self.strike(f)
+                    if f["windup"] <= 0 and (ranged or ITEMS[f['weapon']]['family']=='rope'):pending.append(('strike',f))
+                if f['attack'] and not ranged and ITEMS[f['weapon']]['family']!='rope':pending.append(('melee',f))
                 if f["cooldown"] <= 0: f["attack"] = ""
+            self._hitbox_cache={}
+            for kind,f in pending:
+                if kind=='strike':self.strike(f)
+                else:self.tick_melee(f,dt)
             alive = [f for f in self.fighters.values() if f["dead"]<=0]
             self.tick_objects(dt)
             self.tick_ropes(dt)

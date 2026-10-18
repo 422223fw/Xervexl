@@ -25,7 +25,7 @@ struct App {
     int shopCategory=0,shopPage=0,leaderTab=0,seenEvent=0;float lastBoards=-10,lastWorlds=-10;std::string aimZone="body",heldWeapon="knife",heldSpell;
     bool automatic=true,switchSmoke=false;int switchStep=0;std::vector<std::string> seenApis;
     bool smoke=false,smokeArena=false;std::string screenshot;
-    bool captureNext=false,authSubmitted=false;std::string alignedPlayer;
+    bool captureNext=false,authSubmitted=false,showHitboxes=false,blocking=false;std::string alignedPlayer,shownGuard="centre";
     CombatControls controls;
     MusicPlayer music;json modes=json::array(),editorProps=json::array();std::string pendingMode,editorId,loadedBlueprint;int modePage=0,editorBiome=0,editorPlayers=20,editorTeam=4,editorKind=0;float editorRadius=1,editorHeight=3,lastModes=-10;bool editorSurvival=true,rightClicked=false,editorSelectAll=false;
     explicit App(const std::string& sessionFile="data/login-session.bin"):net(sessionFile){fields[4]=net.url;try{std::ifstream a("data/audio.json");if(a){json v;a>>v;music.enabled=v.value("enabled",true);music.volume=std::clamp(v.value("volume",.32f),0.f,1.f);}}catch(const std::exception&){}try{std::ifstream file("data/controls.json");if(file){json saved;file>>saved;controls.easy=saved.value("easy",true);}}catch(const std::exception&) {}}
@@ -103,7 +103,7 @@ struct App {
         if(!self.is_null()){
             if(alignedPlayer!=player){yaw=std::atan2(-self.value("x",0.f),-self.value("z",0.f));alignedPlayer=player;seenEvent=0;}
             float current=self.value("hp",100.f);if(current<hp)damageUntil=time+.22f;hp=current;stamina=self.value("stamina",100.f);death=self.value("dead",0.f);
-            spawnSafe=self.value("spawn_safe",0.f);healthRegen=self.value("regen_rate",0.f);
+            spawnSafe=self.value("spawn_safe",0.f);healthRegen=self.value("regen_rate",0.f);blocking=self.value("block",false);shownGuard=self.value("guard_dir",std::string("centre"));
             maxHp=self.value("max_hp",100.f);heldWeapon=self.value("weapon",std::string("knife"));heldSpell=self.value("spell",std::string{});spellCd=self.value("spell_cd",0.f);
             if(controls.easy)guardDir=self.value("guard_dir",std::string("centre"));
             if(death>0&&!wasDead)PlaySoundA("assets/fall.wav",nullptr,SND_FILENAME|SND_ASYNC|SND_NODEFAULT);
@@ -138,9 +138,9 @@ struct App {
         float side=static_cast<float>(key('D'))-static_cast<float>(key('A'));
         CombatKeys keys{forward,side,mouseDX,mouseDY,static_cast<bool>(key(VK_LBUTTON)),static_cast<bool>(key(VK_RBUTTON)),static_cast<bool>(key(VK_MBUTTON)),static_cast<bool>(key('V')),static_cast<bool>(key('Q')),static_cast<bool>(key('R')),static_cast<bool>(key('N')),static_cast<bool>(key('K')),static_cast<bool>(key('U')),static_cast<bool>(key('L'))};
         std::string attack=controls.attack(keys);attackMode=controls.cut;
-        if(!controls.easy)guardDir=controls.guard;
+        guardDir=controls.guard;
         json input={{"move",{std::sin(yaw)*forward+std::cos(yaw)*side,std::cos(yaw)*forward-std::sin(yaw)*side}},
-                    {"yaw",yaw},{"attack",attack},{"block",key(VK_RBUTTON)},{"easy_controls",controls.easy},{"auto_cut",controls.primaryAttack},
+                    {"yaw",yaw},{"attack",attack},{"block",key(VK_RBUTTON)},{"easy_controls",controls.easy},{"auto_cut",controls.primaryAttack},{"debug_hitboxes",showHitboxes},
                     {"dodge",key(VK_SHIFT)},{"jump",key(VK_SPACE)},{"drop",key('G')},{"pickup",key('F')},{"cast",key('B')},
                     {"aim_zone",aimZone},{"aim_pitch",pitch-.28f},{"guard_dir",guardDir},{"revive",key('H')}};
         if(smokeArena){input["move"]={0,0};input["attack"]="";}
@@ -165,6 +165,7 @@ struct App {
         }
         environment(canvas,time,world.value("world",json::object()));
         battlefield_objects(canvas,world,time);
+        if(showHitboxes)debug_hitboxes(canvas,world,arena&&cameraDistance<.45f?player:std::string{});
         auto round=world.value("match",json::object());
         if(!round.empty()&&round.value("phase",std::string{})=="playing"){float radius=round.value("zone_radius",38.f);for(int i=0;i<64;i++){float a=i*2*PI/64,b=(i+1)*2*PI/64;canvas.beam({std::sin(a)*radius,.07f,std::cos(a)*radius},{std::sin(b)*radius,.07f,std::cos(b)*radius},.035f,{.32f,.65f,.78f,.80f});}}
         if(world.contains("fighters")){
@@ -233,7 +234,7 @@ struct App {
         if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.8.3",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.9.0",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});
@@ -312,6 +313,7 @@ struct App {
         canvas.rect(997,20,261,67,{.035f,.055f,.058f,.89f});
         auto room=world.value("world",json::object());canvas.text(1013,35,"SERVER "+std::to_string(room.value("server_number",1))+" / "+std::to_string(world.value("humans",0))+" / 100",1.4f,WHITE);canvas.text(1013,61,std::string(renderer->name())+" / "+std::to_string(world.value("bots",0))+" BOTS",1.15f,GOLD);
         canvas.line(634,400,646,400,1.3f,{1,1,1,.6f});canvas.line(640,394,640,406,1.3f,{1,1,1,.6f});
+        if(showHitboxes)canvas.text(28,101,"F3 / SERVER HITBOXES / CYAN: GUARD BLADE",1.2f,GOLD);
         if(spawnSafe>0){canvas.rect(443,145,394,44,{.035f,.055f,.058f,.89f});canvas.text(463,158,"SAFE ENTRY / DAMAGE STARTS SHORTLY",1.55f,GOLD);}
         auto pickup=world.value("pickup",json::object());
         if(!pickup.empty()&&death<=0){
@@ -327,7 +329,7 @@ struct App {
         json slots=profile.value("weapon_slots",json::array({"knife","","","",""}));
         for(int i=0;i<5;i++){float x=450+i*119;std::string id=i<static_cast<int>(slots.size())?slots[i].get<std::string>():"";bool active=id==heldWeapon&&!id.empty();canvas.rect(x,714,112,54,active?Colour{.38f,.28f,.16f,.94f}:Colour{.04f,.07f,.075f,.90f});canvas.border(x,714,112,54,active?GOLD:Colour{.20f,.27f,.25f});canvas.text(x+10,723,std::to_string(i+1),1.4f,GOLD);canvas.text(x+10,748,id.empty()?"EMPTY":id.substr(0,13),1.05f,WHITE);}
         auto info=item_info(heldWeapon);std::string weaponLabel=heldWeapon=="fists"?"BARE HANDS / F: RECOVER":info.value("name",heldWeapon);canvas.text(450,648,weaponLabel+" / AIM: "+aimZone+" [Z X C]",1.3f,GOLD);
-        const char* moveNames[]={"LEFT CUT","RIGHT CUT","OVERHEAD","THRUST"};canvas.text(450,677,controls.easy?std::string("MOVE: ")+moveNames[attackMode]+" / HOLD LMB / RMB: BLOCK":std::string("MOVE: ")+moveNames[attackMode]+" / GUARD: "+guardDir,1.2f,MUTED);canvas.text(450,695,"N RISING / K REVERSE SPIN / U POMMEL / L FEINT",1.05f,MUTED);canvas.text(1100,709,"E ARMOURY\nT SCORES\nESC MENU",1.2f,MUTED);
+        const char* moveNames[]={"LEFT CUT","RIGHT CUT","OVERHEAD","THRUST"};canvas.text(450,677,blocking?"GUARD: "+shownGuard+" / MOUSE OR A D W S":controls.easy?std::string("MOVE: ")+moveNames[attackMode]+" / HOLD LMB / RMB: BLOCK":std::string("MOVE: ")+moveNames[attackMode]+" / GUARD: "+guardDir,1.2f,blocking?Colour{.4f,.85f,.95f}:MUTED);canvas.text(450,695,"N RISING / K REVERSE SPIN / U POMMEL / L FEINT",1.05f,MUTED);canvas.text(1100,709,"E ARMOURY\nT SCORES\nESC MENU",1.2f,MUTED);
         if(!heldSpell.empty())canvas.text(450,622,"B: "+heldSpell+(spellCd>0?" / "+std::to_string(static_cast<int>(std::ceil(spellCd)))+"S":" / READY"),1.3f,{.46f,.74f,.92f});
         float progress=profile.value("xp_progress",0.f);canvas.rect(450,781,589,5,{.16f,.20f,.18f});canvas.rect(450,781,589*std::clamp(progress,0.f,1.f),5,GOLD);
         if(world.contains("events")){float y=106;for(auto& e:world["events"])if(e.value("kind",std::string{})=="kill"&&world.value("time",0.f)-e.value("time",0.f)<8){std::string label=e.value("source",std::string{})+"  /  "+e.value("target",std::string{});canvas.rect(961,y-7,296,26,{.04f,.06f,.06f,.72f});canvas.text(974,y,label,1.2f,MUTED);y+=32;}}
@@ -381,6 +383,7 @@ LRESULT CALLBACK window_proc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
             if(wp=='I'&&app->focus<0&&app->screen!=Screen::Auth&&app->screen!=Screen::Settings&&!(lp&(1<<30)))app->screen=app->screen==Screen::Inventory?Screen::Home:Screen::Inventory;
             if(wp>='1'&&wp<='5'&&app->arena&&app->screen==Screen::Home&&!(lp&(1<<30)))app->switch_slot(static_cast<int>(wp-'1'));
             if(wp==VK_TAB&&app->screen==Screen::Auth){app->focus=(app->focus+1)%(app->authMode==1?3:2);}
+            if(wp==VK_F3&&!(lp&(1<<30))){app->showHitboxes=!app->showHitboxes;app->toast(app->showHitboxes?"HITBOXES ON / HEAD BODY LIMBS AND BLADE":"HITBOXES OFF");}
             if(wp==VK_F12){std::filesystem::create_directories("screenshots");app->captureNext=true;app->screenshot="screenshots/capture.bmp";app->toast("Screenshot saved in screenshots/capture.bmp");}
             return 0;
         case WM_CHAR:

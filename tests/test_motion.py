@@ -20,7 +20,7 @@ class MotionTests(unittest.TestCase):
         self.a=self.arena.fighters[self.arena.sessions[self.tokens[0]]["fighter"]]
         self.b=self.arena.fighters[self.arena.sessions[self.tokens[1]]["fighter"]]
         self.a.update(x=0,z=0,yaw=0,body_yaw=0,spawn_safe=0,weapon="longsword",attack="left",world_id=0)
-        self.b.update(x=0,z=2,yaw=math.pi,spawn_safe=0,world_id=0)
+        self.b.update(x=0,z=2,yaw=math.pi,body_yaw=math.pi,spawn_safe=0,world_id=0)
         self.arena.fighters={self.a["id"]:self.a,self.b["id"]:self.b}
         self.arena.maintain_bots=lambda:None
 

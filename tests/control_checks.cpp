@@ -24,5 +24,8 @@ int main(){
     c.easy=true;k.left=true;assert(c.attack(k).empty());
     k={};k.rising=true;assert(c.attack(k)=="rising");k={};k.reverseSpin=true;assert(c.attack(k)=="reverse_spin");
     k={};k.pommel=true;assert(c.attack(k)=="pommel");k={};k.feint=true;assert(c.attack(k)=="feint");
+    k={};k.right=true;k.side=-1;c.attack(k);assert(c.guard=="left");
+    k.side=1;c.attack(k);assert(c.guard=="right");k.side=0;k.forward=1;c.attack(k);assert(c.guard=="up");
+    k.forward=-1;c.attack(k);assert(c.guard=="centre");k.mouseX=-8;c.attack(k);assert(c.guard=="left");
     std::cout<<"Combat controls: nine movement directions, held primary attacks, explicit move overrides, manual guards and block priority passed.\n";
 }

@@ -137,7 +137,27 @@ inline void held_equipment(Canvas& c,const std::string& id,Vec hand,Vec tip,Vec 
         c.beam(hand+direction*.24f,tip,.035f,metal);c.beam(hand+direction*.26f+across*.027f,tip,.009f,{.88f,.89f,.84f});
     }
 }
+inline void debug_hitboxes(Canvas& c,const json& world,const std::string& hiddenId={}){
+    auto vec=[](const json& v){return Vec{v[0],v[1],v[2]};};
+    if(!world.contains("hitboxes"))return;
+    for(const auto& actor:world["hitboxes"]){
+        if(actor.value("id",std::string{})==hiddenId)continue;
+        for(const auto& s:actor["shapes"]){std::string zone=s[0],kind=s[1];Colour colour=zone=="head"?Colour{1,.46f,.24f}:zone=="body"?Colour{.98f,.82f,.3f}:zone=="arms"?Colour{.35f,.77f,1}:Colour{.55f,.95f,.5f};
+            if(kind=="box"){
+                Vec centre=vec(s[2]),axes[3]={vec(s[3][0]),vec(s[3][1]),vec(s[3][2])},half=vec(s[4]);Vec corners[8];
+                for(int i=0;i<8;i++)corners[i]=centre+axes[0]*((i&1)?half.x:-half.x)+axes[1]*((i&2)?half.y:-half.y)+axes[2]*((i&4)?half.z:-half.z);
+                for(int i=0;i<8;i++)for(int bit:{1,2,4})if(!(i&bit))c.beam(corners[i],corners[i|bit],.008f,colour);
+            }else{
+                Vec a=vec(s[2]),b=vec(s[3]),direction=norm(b-a),side=norm(cross(direction,std::abs(direction.y)<.9f?Vec{0,1,0}:Vec{1,0,0})),up=cross(direction,side);float radius=s[4];
+                for(int i=0;i<8;i++){float x=i*PI/4,y=(i+1)*PI/4;Vec offset=(side*std::cos(x)+up*std::sin(x))*radius,next=(side*std::cos(y)+up*std::sin(y))*radius;c.beam(a+offset,b+offset,.006f,colour);c.beam(a+offset,a+next,.006f,colour);c.beam(b+offset,b+next,.006f,colour);}
+                for(Vec radial:{side,up})for(int sign:{-1,1})for(int i=0;i<4;i++){float x=i*PI/4,y=(i+1)*PI/4;Vec centre=sign<0?a:b;c.beam(centre+(radial*std::cos(x)+direction*(sign*std::sin(x)))*radius,centre+(radial*std::cos(y)+direction*(sign*std::sin(y)))*radius,.006f,colour);}
+            }
+        }
+        c.beam(vec(actor["blade"][0]),vec(actor["blade"][1]),.025f,actor.value("blocking",false)?Colour{.2f,1,1}:Colour{1,.3f,.8f});
+    }
+}
 inline void battlefield_objects(Canvas& c,const json& world,float){
+    if(world.contains("events"))for(const auto& e:world["events"]){float age=world.value("time",0.f)-e.value("time",0.f);std::string kind=e.value("kind",std::string{});if((kind=="parry"||kind=="block")&&age>=0&&age<.22f&&e.contains("point")&&!e["point"].is_null()){Vec p{e["point"][0],e["point"][1],e["point"][2]};for(int i=0;i<6;i++){float a=i*PI/3;c.beam(p,p+Vec{std::cos(a),std::sin(a),.25f}*(.08f+age*.8f),.008f,{1,.78f,.35f});}}}
     if(world.contains("drops"))for(const auto& d:world["drops"]){float y=d.value("y",.06f),a=d.value("age",0.f)*2;auto hint=world.value("pickup",json::object());if(y<=.22f)a=1.85f;Vec p{d.value("x",0.f),y,d.value("z",0.f)},front{std::sin(a),0,std::cos(a)},side{std::cos(a),0,-std::sin(a)};held_equipment(c,d.value("weapon",std::string("knife")),p,p+front*1.1f,side,front);if(!hint.empty()&&hint.value("id",std::string{})==d.value("id",std::string{})){Colour glow{.95f,.69f,.32f,.75f};for(int i=0;i<16;i++){float t=i*PI/8;Vec marker=p+Vec{std::sin(t)*.42f,.015f,std::cos(t)*.42f};c.box(marker,{.045f,.012f,.045f},glow);}}}
     if(world.contains("projectiles"))for(const auto& p:world["projectiles"]){Vec v{p.value("x",0.f),p.value("y",1.f),p.value("z",0.f)},direction=norm({p.value("vx",0.f),p.value("vy",0.f),p.value("vz",1.f)});std::string kind=p.value("kind",std::string{});
         if(kind=="slingshot")c.ellipsoid(v,{.055f,.055f,.055f},{.53f,.55f,.51f},0,4,6);
@@ -151,6 +171,10 @@ inline PoseInput pose_input(const json& f,float time,bool firstPerson=false){
     float yaw=firstPerson||input.block||!input.attack.empty()?f.value("yaw",0.f):f.value("body_yaw",f.value("yaw",0.f));
     float x=f.value("move_x",0.f),z=f.value("move_z",0.f);
     input.moveSide=(x*std::cos(yaw)-z*std::sin(yaw))/4.4f;input.moveForward=(x*std::sin(yaw)+z*std::cos(yaw))/4.4f;input.gait=f.value("gait",0.f);
+    if(input.block&&f.contains("guard_from")&&!f["guard_from"].empty()){
+        const auto& p=f["guard_from"];input.guardAge=time-f.value("guard_changed",time);
+        input.guardFrom={{p[0],p[1],p[2]},{p[3],p[4],p[5]},p[6],p[7],p[8]};
+    }
     return input;
 }
 inline CombatPose pose_for(const json& f,float time){return combat_pose(pose_input(f,time));}
@@ -205,7 +229,7 @@ inline void fighter(Canvas& c,const json& f,float time,bool self=false,const Com
     Vec leftShoulder=p-side*.34f+Vec{0,1.43f,0};blade_pose(f,time,p,bladeFront,bladeSide,length,hand,tip,&pose,&shoulder,&leftShoulder);
     Vec elbow=solve_joint(shoulder,hand,side-Vec{0,.6f,0},.36f);c.beam(shoulder,elbow,.082f,cloth);c.ellipsoid(elbow,{.083f,.083f,.083f},cloth,yaw,4,6);c.beam(elbow,hand,.068f,cloth);c.box(hand,{.14f,.14f,.14f},skin,yaw);
     held_equipment(c,weapon,hand,tip,bladeSide,bladeFront);
-    Vec left=p-side*.37f+front*(block?.35f:.21f)+Vec{0,block?1.37f:1.19f,0};if(two_handed(f))left=hand-norm(tip-hand)*.11f;else left=limit_reach(leftShoulder,left,.70f);Vec leftElbow=solve_joint(leftShoulder,left,-side-Vec{0,.6f,0},.36f);c.beam(leftShoulder,leftElbow,.08f,cloth);c.beam(leftElbow,left,.067f,cloth);c.box(left,{.14f,.14f,.14f},skin,yaw);
+    bool tuck=block&&f.value("shield",std::string{}).empty();Vec left=p-side*(block?(tuck?.28f:.18f):.37f)+front*(block?(tuck?.03f:.48f):.21f)+Vec{0,block?(tuck?1.08f:1.37f):1.19f,0};if(two_handed(f))left=hand-norm(tip-hand)*.11f;else left=limit_reach(leftShoulder,left,.70f);Vec leftElbow=solve_joint(leftShoulder,left,-side-Vec{0,.6f,0},.36f);c.beam(leftShoulder,leftElbow,.08f,cloth);c.beam(leftElbow,left,.067f,cloth);c.box(left,{.14f,.14f,.14f},skin,yaw);
     if(!f.value("shield",std::string{}).empty()){c.box(left+front*.1f,{.55f,.75f,.13f},dark,yaw);c.box(left+front*.18f,{.48f,.66f,.05f},metal,yaw);c.box(left+front*.22f,{.12f,.14f,.07f},GOLD,yaw);}
     float fall=f.value("fall",0.f);if(fall>0){float duration=f.value("fall_duration",1.25f),pose=std::min(1.f,(duration-fall)*7)*std::min(1.f,fall*4),a=pose*PI*.48f;auto rotate=[&](Vec v){Vec d=v-p;float localY=d.y,localZ=dot(d,front);return p+side*dot(d,side)+Vec{0,localY*std::cos(a)-localZ*std::sin(a)+.08f,0}+front*(localY*std::sin(a)+localZ*std::cos(a));};for(size_t i=bodyBegin;i<c.triangles.size();i++){auto& t=c.triangles[i];t.a=rotate(t.a);t.b=rotate(t.b);t.c=rotate(t.c);t.depth=dot((t.a+t.b+t.c)*(1.f/3)-c.camera,c.forward);}}
 }

@@ -30,8 +30,8 @@ class ArenaTests(unittest.TestCase):
         token,a = self.player()
         _,b = self.player()
         self.arena.fighters = {a["id"]:a,b["id"]:b}
-        a.update(x=0,z=0,yaw=0,weapon="longsword",spawn_safe=0)
-        b.update(x=0,z=2,yaw=math.pi,spawn_safe=0)
+        a.update(x=0,z=0,yaw=0,body_yaw=0,weapon="longsword",spawn_safe=0)
+        b.update(x=0,z=2,yaw=math.pi,body_yaw=math.pi,spawn_safe=0)
         return a,b
 
     def test_accounts_are_hashed_persistent_and_private(self):
@@ -63,11 +63,13 @@ class ArenaTests(unittest.TestCase):
         a,b=self.pair();a["attack"]="left"
         self.arena.strike(a);unblocked=100-b["hp"]
         self.assertGreater(unblocked,0)
-        b.update(hp=100,block=True,shield="kite",stamina=100)
+        b.update(hp=100,block=True,guard_dir='right',shield="kite",stamina=100)
         self.arena.strike(a);self.assertLess(100-b["hp"],unblocked)
         b.update(hp=100,dodge=.2)
+        a['attack']='left'
         self.arena.strike(a);self.assertEqual(b["hp"],100)
         b.update(dodge=0,block=False,z=-2)
+        a['attack']='left'
         self.arena.strike(a);self.assertEqual(b["hp"],100)
 
     def test_buy_equip_and_persist(self):
@@ -83,7 +85,7 @@ class ArenaTests(unittest.TestCase):
 
     def test_timed_parry_prevents_damage_and_staggers_attacker(self):
         a,b=self.pair();a["attack"]="left"
-        b.update(block=True,block_since=self.arena.clock)
+        b.update(block=True,guard_dir='right',block_since=self.arena.clock)
         self.arena.strike(a)
         self.assertEqual(b["hp"],100)
         self.assertGreaterEqual(a["cooldown"],.85)

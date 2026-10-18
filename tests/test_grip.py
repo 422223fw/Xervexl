@@ -23,8 +23,8 @@ class GripTests(unittest.TestCase):
         self.b=self.arena.spawn('grip-opponent','Opponent')
         self.arena.fighters={self.a['id']:self.a,self.b['id']:self.b}
         self.arena.maintain_bots=lambda:None
-        self.a.update(x=0,z=0,yaw=0,world_id=0,spawn_safe=0,weapon='longsword',attack='disarm')
-        self.b.update(x=0,z=1.5,yaw=math.pi,world_id=0,spawn_safe=0,weapon='sabre',stamina=20,cooldown=.3,skill=50)
+        self.a.update(x=0,z=0,yaw=0,body_yaw=0,world_id=0,spawn_safe=0,weapon='longsword',attack='disarm',attack_windup=.30,attack_duration=.66)
+        self.b.update(x=0,z=1.5,yaw=math.pi,body_yaw=math.pi,world_id=0,spawn_safe=0,weapon='sabre',stamina=20,cooldown=.3,skill=50)
 
     def tearDown(self):self.temp.cleanup()
 
@@ -93,6 +93,7 @@ class GripTests(unittest.TestCase):
         with patch.object(self.arena.rng,'random',return_value=0) as roll:self.arena.strike(self.a)
         roll.assert_not_called();self.assertEqual(self.a['weapon'],'longsword')
         self.b['block_since']=1
+        self.a['attack']='left'
         with patch.object(self.arena.rng,'random',return_value=.039):self.arena.strike(self.a)
         self.assertEqual(self.a['weapon'],'fists');self.assertEqual(self.b['disarms'],1)
 
@@ -101,10 +102,10 @@ class GripTests(unittest.TestCase):
         self.b.update(block=True,block_since=self.arena.clock,guard_dir='right')
         with patch.object(self.arena.rng,'random',return_value=.04):self.arena.strike(self.a)
         self.assertEqual(self.a['weapon'],'longsword')
-        self.a.update(grip_upgrades=1,grip_test_after=0)
+        self.a.update(grip_upgrades=1,grip_test_after=0,attack='left')
         with patch.object(self.arena.rng,'random',return_value=.03):self.arena.strike(self.a)
         self.assertEqual(self.a['weapon'],'longsword')
-        self.a['grip_test_after']=0
+        self.a['grip_test_after']=0;self.a['attack']='left'
         with patch.object(self.arena.rng,'random',return_value=.019):self.arena.strike(self.a)
         self.assertEqual(self.a['weapon'],'fists')
 

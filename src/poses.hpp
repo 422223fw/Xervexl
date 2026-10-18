@@ -22,8 +22,8 @@ inline MoveTiming move_timing(const std::string& move){
     if(move=="disarm")return {.30f,.66f};if(move=="thrust")return {.24f,.58f};if(move=="rising")return {.28f,.66f};
     if(move=="pommel")return {.22f,.52f};if(move=="feint")return {.12f,.32f};return {.24f,.60f};
 }
-struct PoseInput{std::string attack,guard="centre";bool block=false;float age=0,windup=.24f,duration=.60f;std::string aim="body";float moveSide=0,moveForward=0,gait=0;};
 struct CombatPose{Vec hand{.30f,1.22f,.31f},direction{-.16f,.78f,.61f};float twist=0,spin=0,lunge=0;};
+struct PoseInput{std::string attack,guard="centre";bool block=false;float age=0,windup=.24f,duration=.60f;std::string aim="body";float moveSide=0,moveForward=0,gait=0,guardAge=999;CombatPose guardFrom;};
 inline float angle_delta(float a,float b){return std::remainder(b-a,2*PI);}
 inline float blade_yaw(Vec d){return std::atan2(d.x,d.z);}
 inline float blade_pitch(Vec d){return std::atan2(d.y,std::hypot(d.x,d.z));}
@@ -60,10 +60,11 @@ inline CombatPose pose_segment(const CombatPose& a,const CombatPose& b,float t,f
 inline CombatPose combat_pose(const PoseInput& input){
     CombatPose idle=walking_pose(input);
     if(input.block){
-        CombatPose guard;guard.hand={.10f,1.39f,.44f};
-        guard.direction=norm(input.guard=="left"?Vec{-.58f,.78f,.22f}:input.guard=="right"?Vec{.58f,.78f,.22f}:Vec{-.74f,.64f,.20f});
-        if(input.guard=="left")guard.hand.x=-.04f;else if(input.guard=="right")guard.hand.x=.38f;
-        if(input.guard=="up"){guard.hand={.02f,1.84f,.29f};guard.direction=norm({.96f,.06f,.25f});}
+        CombatPose guard;guard.hand={.32f,1.29f,.48f};guard.direction=norm({-.97f,.12f,.20f});
+        if(input.guard=="left"){guard.hand={.02f,1.30f,.60f};guard.direction=norm({-.95f,.26f,.18f});}
+        if(input.guard=="right"){guard.hand={.34f,1.08f,.48f};guard.direction=norm({.10f,.98f,.12f});}
+        if(input.guard=="up"){guard.hand={.03f,2.0f,.15f};guard.direction=norm({-.98f,0.f,.18f});}
+        if(input.guardAge>=0&&input.guardAge<.12f)return blend_pose(input.guardFrom,guard,smooth(input.guardAge/.12f));
         return guard;
     }
     if(input.attack.empty()||input.age<0||input.age>=input.duration)return idle;
@@ -80,7 +81,7 @@ inline CombatPose combat_pose(const PoseInput& input){
         finish=contact;finish.hand.z=.61f;finish.lunge=.12f;
     }else if(input.attack=="disarm"){
         loaded.hand={.37f,1.26f,.19f};loaded.direction={.65f,.68f,.24f};loaded.twist=.15f;
-        contact.hand={.16f,1.25f,.59f};contact.direction={-.34f,.22f,1};contact.lunge=.07f;
+        contact.hand={.07f,1.25f,.59f};contact.direction={-.55f,.05f,1};contact.lunge=.07f;
         finish.hand={.40f,1.43f,.28f};finish.direction={.74f,.52f,.43f};finish.twist=.22f;
         offset=tilt=0;
     }else if(input.attack=="rising"){
@@ -154,7 +155,7 @@ struct PoseTransition{
         if(!ready){ready=true;previous=input;previousAttack=attackId;displayed=target;return target;}
         bool changedState=input.block!=previous.block||(input.block&&input.guard!=previous.guard)||input.attack!=previous.attack||attackId!=previousAttack;
         if(changedState){
-            from=displayed;changed=localTime;span=input.block?.055f:.075f;
+            from=displayed;changed=localTime;span=input.block?(input.guardAge<999?0.f:.12f):.075f;
             if(!input.block&&!input.attack.empty())span=std::min(.05f,std::max(0.f,input.windup-input.age));
         }
         previous=input;previousAttack=attackId;

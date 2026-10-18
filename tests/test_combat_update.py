@@ -168,11 +168,13 @@ class MoveTimingTests(unittest.TestCase):
 
     def input(self,**values):self.a['input']=values;self.a['last_input']=self.arena.clock
 
-    def test_impact_occurs_at_the_reported_animation_contact_time(self):
+    def test_impact_uses_the_animated_blade_inside_the_active_window(self):
         self.input(attack='left');self.arena.tick(.03)
         self.assertEqual(self.a['attack_windup'],.24)
-        self.arena.tick(.20);self.assertEqual(self.b['hp'],100)
-        self.arena.tick(.05);self.assertLess(self.b['hp'],100)
+        self.arena.tick(.15);self.assertEqual(self.b['hp'],100)
+        self.arena.tick(.10);self.assertLess(self.b['hp'],100)
+        hit=next(e for e in self.arena.events if e['kind']=='hit')
+        self.assertEqual(len(hit['point']),3)
 
     def test_late_click_buffers_the_next_cut_and_block_clears_it(self):
         self.input(attack='left');self.arena.tick(.03)

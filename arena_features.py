@@ -1,5 +1,6 @@
 """Seeded arena rooms, inventory, direction-sensitive guard, footing and ropes."""
 import math
+from hitboxes import guard_direction
 import random
 import secrets
 from collections import Counter
@@ -114,10 +115,9 @@ class ArenaFeatures:
         return dict(profile=self.profile(u))
 
     def guard_matches(self,attacker,defender):
-        direction={"left":"right","right":"left","overhead":"up","thrust":"centre","disarm":"centre"}.get(attacker["attack"],"centre")
+        direction=guard_direction(attacker['attack'])
         guard=defender.get("guard_dir","centre")
-        # A centred guard covers the neutral crossing; explicit side guards counter side cuts.
-        return guard==direction or (guard=="centre" and attacker["attack"] in ("left","right","thrust","disarm"))
+        return guard==direction
 
     def balanced_hit(self,victim,damage,zone):
         if victim["dead"]>0 or damage<=0:return

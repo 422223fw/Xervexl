@@ -1,6 +1,7 @@
 """Server-authoritative combat, progression, dropped weapons and projectiles."""
 import math
 import secrets
+import hitboxes as hb
 from rules import (ITEMS,RANGED,TARGET_HEIGHTS,BODY_MULTIPLIERS,PERSISTENT,
                    level_for_xp,kill_reward,death_penalty,zone_from_height,public_integer,MOVES,grip_risk_multiplier,
                    HEALTH_REGEN_DELAY,HEALTH_REGEN_RATE)
@@ -131,7 +132,7 @@ class Combat:
         self.emit("pickup",source=f["id"],weapon=chosen["weapon"],drop_id=chosen['id'],own=chosen['owner']==f['id'])
         return True
 
-    def damage(self,attacker,victim,base,zone,kind="hit",magic="",pierce=0.,learning_ticket=None):
+    def damage(self,attacker,victim,base,zone,kind="hit",magic="",pierce=0.,learning_ticket=None,point=None):
         if victim["dead"]>0 or victim["spawn_safe"]>0 or attacker["spawn_safe"]>0 or not self.can_fight(attacker,victim):return
         if victim.get('downed',0)>0:
             victim['down_hp']-=max(0,base);victim['last_hurt']=self.clock;victim['regen_rate']=0.
@@ -155,9 +156,11 @@ class Combat:
             victim["cooldown"]=max(victim["cooldown"],.18)
         if magic=="fire" and amount>0 and kind!="burn":
             victim["burn"]=3.;victim["burn_source"]=attacker["id"];victim["burn_tick"]=0.
-        self.emit(kind,source=attacker["id"],target=victim["id"],damage=round(amount,1),zone=zone,weapon=attacker["weapon"])
+        self.emit(kind,source=attacker["id"],target=victim["id"],damage=round(amount,1),zone=zone,weapon=attacker["weapon"],point=point)
         if downed:self.script_event('down',attacker,zone)
         if victim["hp"]<=0:self.finish_kill(attacker,victim,zone)
+        cache=getattr(self,'_hitbox_cache',None)
+        if cache is not None:cache.pop(victim['id'],None)
 
     def finish_kill(self,attacker,victim,zone='body'):
         if victim['dead']>0:return
@@ -178,6 +181,7 @@ class Combat:
         else:self.sync_progress(victim)
 
     def strike(self,attacker):
+        self._hitbox_cache={}
         ticket=attacker.get('attack_learning')
         try:self.perform_strike(attacker)
         finally:
@@ -191,36 +195,65 @@ class Combat:
         if item["family"] in RANGED:
             self.shoot(attacker,item)
             return
-        move=MOVES.get(attacker["attack"],MOVES["left"])
-        reach=item["reach"]+move["reach"]
-        arc=move["arc"]
-        for victim in list(self.fighters.values()):
-            if victim["dead"]>0 or victim["dodge"]>0 or victim["spawn_safe"]>0 or not self.can_fight(attacker,victim):continue
-            dx,dz=victim["x"]-attacker["x"],victim["z"]-attacker["z"]
-            if math.hypot(dx,dz)>reach or abs(angle(math.atan2(dx,dz)-attacker["yaw"]))>arc:continue
-            facing=abs(angle(math.atan2(-dx,-dz)-victim["yaw"]))<1.15
-            armed=ITEMS[victim["weapon"]]["family"]!="unarmed"
-            matching=self.guard_matches(attacker,victim)
-            if victim["block"] and facing and armed:
-                tight=abs(angle(math.atan2(-dx,-dz)-victim["yaw"]))<.55
-                if self.clock-victim["block_since"]<=.18 and tight and matching:
-                    # A timed blade parry consumes exactly zero stamina.
-                    attacker["cooldown"]=max(attacker["cooldown"],.85)
-                    self.parry_reward(victim,attacker)
-                    self.emit("parry",source=attacker["id"],target=victim["id"],damage=0)
-                    self.try_disarm(victim,attacker,parry=True);attacker["cooldown"]=max(attacker["cooldown"],.85)
+        start,end=hb.active_window(attacker)
+        self.sweep_melee(attacker,start,end,set())
+
+    def hit_shapes(self,f):
+        cache=getattr(self,'_hitbox_cache',None)
+        if cache is None:return hb.body_shapes(f,self.clock)
+        if f['id'] not in cache:cache[f['id']]=hb.body_shapes(f,self.clock)
+        return cache[f['id']]
+
+    def sweep_melee(self,attacker,start,end,resolved):
+        if end<=start or attacker['dead']>0 or attacker['spawn_safe']>0 or attacker['fall']>0 or attacker['block'] or attacker.get('downed',0)>0:return
+        item=ITEMS[attacker['weapon']];attack=attacker['attack'];move=MOVES.get(attack)
+        if not move:return
+        nearby=[v for v in self.fighters.values() if v['id'] not in resolved and v['dead']<=0 and v['spawn_safe']<=0 and v['dodge']<=0 and self.can_fight(attacker,v)
+                and math.hypot(v['x']-attacker['x'],v['z']-attacker['z'])<hb.blade_length(attacker['weapon'])+1.45]
+        steps=max(1,min(96,math.ceil((end-start)*200)))
+        for index in range(steps+1):
+            age=start+(end-start)*index/steps
+            a,b=hb.weapon_segment(attacker,self.clock,age)
+            for victim in nearby:
+                if victim['id'] in resolved or victim['dead']>0:continue
+                shapes,shield=self.hit_shapes(victim);body=hb.body_hit(a,b,shapes)
+                facing=abs(angle(math.atan2(attacker['x']-victim['x'],attacker['z']-victim['z'])-victim['yaw']))<1.15
+                defended=False;contact=None
+                if victim['block'] and facing and ITEMS[victim['weapon']]['family'] in hb.MELEE-{'unarmed'} and self.guard_matches(attacker,victim):
+                    c,d=hb.weapon_segment(victim,self.clock)
+                    distance,t,_=hb.closest_segments(a,b,c,d)
+                    if distance<=.19**2 and (not body or t<=body[0]+.10):
+                        defended=True;contact=hb.add(a,hb.mul(hb.sub(b,a),t))
+                if defended:
+                    resolved.add(victim['id'])
+                    tight=abs(angle(math.atan2(attacker['x']-victim['x'],attacker['z']-victim['z'])-victim['yaw']))<.55
+                    timed=0<=self.clock-victim['block_since']<=.18 and tight
+                    if timed:self.parry_reward(victim,attacker)
+                    else:self.learning_damage(attacker,victim,0,attacker.get('attack_learning'),blocked=True)
+                    self.emit('parry' if timed else 'block',source=attacker['id'],target=victim['id'],damage=0,point=contact,guard=victim['guard_dir'])
+                    if timed:self.try_disarm(victim,attacker,parry=True)
+                    attacker.update(attack='',windup=0.,queued_attack='',cooldown=max(attacker['cooldown'],.85 if timed else .35))
+                    ticket=attacker.get('attack_learning')
+                    if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
                     return
-            if attacker["attack"]=="disarm":
-                if self.try_disarm(attacker,victim):return
-                continue
-            multiplier=move["multiplier"]
-            base=item["damage"]*multiplier
-            if victim["block"] and facing and armed:
-                if matching:base=0
-                else:base*=1-ITEMS.get(victim["shield"],{}).get("reduction",.35)
-            height=TARGET_HEIGHTS[attacker.get("aim_zone","body")]+self.lift(attacker)-self.lift(victim)+(1.1 if victim["fall"]>0 else 0)
-            if not .12<=height<=2.2:continue
-            self.damage(attacker,victim,base,zone_from_height(height),magic=item.get("magic",""),pierce=item.get("armour_pierce",0))
+                if attack=='disarm':
+                    c,d=hb.weapon_segment(victim,self.clock)
+                    if hb.closest_segments(a,b,c,d)[0]<.20**2:
+                        resolved.add(victim['id']);self.try_disarm(attacker,victim)
+                    continue
+                if not body:continue
+                resolved.add(victim['id']);_,zone,point=body
+                base=item['damage']*move['multiplier']
+                if shield and (t:=hb.shape_hit(a,b,shield)) is not None and t<=body[0]:base*=1-ITEMS[victim['shield']]['reduction']
+                self.damage(attacker,victim,base,zone,magic=item.get('magic',''),pierce=item.get('armour_pierce',0),point=point)
+
+    def tick_melee(self,f,dt):
+        low,high=hb.active_window(f);age=self.clock-f['attack_started']
+        start=max(low,age-dt);end=min(high,age)
+        if end>start:self.sweep_melee(f,start,end,f.setdefault('melee_targets',set()))
+        if age>=high:
+            ticket=f.get('attack_learning')
+            if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
 
     def shoot(self,attacker,item,spell=""):
         if attacker["dead"]>0 or attacker["spawn_safe"]>0:return
@@ -252,6 +285,7 @@ class Combat:
         return True
 
     def tick_objects(self,dt):
+        self._hitbox_cache={}
         for drop in self.drops:
             drop["age"]+=dt
             if drop["y"]>.06 or drop["vy"]>0:
@@ -269,20 +303,31 @@ class Combat:
             if not attacker or attacker["world_id"]!=p["world_id"]:
                 self.learning.finish(p.get('_learning'),miss=True)
                 continue
-            consumed=False
+            consumed=False;candidates=[]
+            end=(p['x'],p['y'],p['z'])
             for victim in self.fighters.values():
                 if victim["dead"]>0 or victim["spawn_safe"]>0 or victim["dodge"]>0 or not self.can_fight(attacker,victim):continue
-                # Swept segment versus the upright hit capsule; avoids fast-bolt tunnelling.
-                dx,dz=p["x"]-old[0],p["z"]-old[2];den=dx*dx+dz*dz
-                t=max(0,min(1,((victim["x"]-old[0])*dx+(victim["z"]-old[2])*dz)/den)) if den else 0
-                cx,cy,cz=old[0]+t*dx,old[1]+t*(p["y"]-old[1]),old[2]+t*dz
-                height=cy-self.lift(victim)+(1.1 if victim["fall"]>0 else 0)
-                if math.hypot(cx-victim["x"],cz-victim["z"])>.45 or not .12<=height<=2.2:continue
+                shapes,shield=self.hit_shapes(victim);body=hb.body_hit(old,end,shapes,.025)
+                guard_hit=None
+                facing=abs(angle(math.atan2(-p['vx'],-p['vz'])-victim['yaw']))<1.15
+                blade=ITEMS[victim['weapon']]['family'] in hb.MELEE-{'unarmed'}
+                if blade and facing and (victim['block'] or victim['attack'] and victim['windup']>0):
+                    c,d=hb.weapon_segment(victim,self.clock)
+                    guard_hit=hb.segment_capsule(old,end,c,d,.15)
+                shield_hit=hb.shape_hit(old,end,shield,.025) if shield and facing else None
+                contact=min((t for t in (body[0] if body else None,guard_hit,shield_hit) if t is not None),default=None)
+                if contact is not None:candidates.append((contact,victim,body,guard_hit,shield_hit))
+            for _,victim,body,guard_hit,shield_hit in sorted(candidates,key=lambda c:c[0]):
+                t=guard_hit if guard_hit is not None and (not body or guard_hit<=body[0]) else body[0] if body else shield_hit
+                cx,cy,cz=hb.add(old,hb.mul(hb.sub(end,old),t))
                 facing=abs(angle(math.atan2(-p["vx"],-p["vz"])-victim["yaw"]))<1.15
                 blade=ITEMS[victim["weapon"]]["family"] in ("blade","spear","axe","mace")
                 timed=victim["block"] and self.clock-victim["block_since"]<=.18
                 swinging=victim["windup"]>0 and victim["attack"]!="disarm"
-                if blade and facing and (timed or swinging) and p["bounces"]<2:
+                incoming=angle(math.atan2(-p['vx'],-p['vz'])-victim['yaw'])
+                expected='up' if cy-self.lift(victim)>1.65 else 'left' if incoming<-.28 else 'right' if incoming>.28 else 'centre'
+                aligned=victim['guard_dir']==expected or not victim['block']
+                if guard_hit is not None and (not body or guard_hit<=body[0]) and blade and facing and aligned and (timed or swinging) and p["bounces"]<2:
                     self.learning_reward(p.get('_learning'),-10,True)
                     self.learning.finish(p.get('_learning'))
                     p['_learning']=None
@@ -293,10 +338,14 @@ class Combat:
                     p.update(owner=victim["id"],vx=dx/length*speed,vz=dz/length*speed,vy=dy/length*speed,gravity=0.,x=cx+dx/length*.6,y=cy+dy/length*.6,z=cz+dz/length*.6,bounces=p["bounces"]+1,origin_x=cx,origin_y=cy,origin_z=cz)
                     self.emit("deflect",source=victim["id"],target=attacker["id"])
                     break
+                if guard_hit is not None and (not body or guard_hit<=body[0]) and blade and facing and aligned and victim['block']:
+                    self.learning_reward(p.get('_learning'),-2,True);self.learning.finish(p.get('_learning'))
+                    self.emit('block',source=attacker['id'],target=victim['id'],point=(cx,cy,cz),damage=0,guard=victim['guard_dir'])
+                    consumed=True;break
                 base=p["damage"]
-                if victim["block"] and facing:
-                    base*=1-ITEMS.get(victim["shield"],{}).get("reduction",.52)
-                self.damage(attacker,victim,base,zone_from_height(height),kind="projectile_hit",magic=p["magic"],learning_ticket=p.get('_learning'))
+                if shield_hit is not None and (not body or shield_hit<=body[0]):base*=1-ITEMS[victim['shield']]['reduction']
+                elif not body:continue
+                self.damage(attacker,victim,base,body[1] if body else 'arms',kind="projectile_hit",magic=p["magic"],learning_ticket=p.get('_learning'),point=(cx,cy,cz))
                 self.learning.finish(p.get('_learning'),miss=True)
                 consumed=True;break
             if not consumed:alive.append(p)

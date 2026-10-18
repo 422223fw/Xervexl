@@ -78,12 +78,12 @@ int main(){
     PoseInput blocking{"","up",true};
     auto cancel=transition.sample(blocking,1,.05f);
     assert(dot(cancel.hand-swinging.hand,cancel.hand-swinging.hand)<.000001f);
-    auto guard=transition.sample(blocking,1,.11f),expected=combat_pose(blocking);
+    auto guard=transition.sample(blocking,1,.18f),expected=combat_pose(blocking);
     assert(dot(guard.hand-expected.hand,guard.hand-expected.hand)<.000001f);
     assert(dot(guard.direction-expected.direction,guard.direction-expected.direction)<.000001f);
     // Even a late attack update reaches its contact pose on time.
-    transition.sample({"right","centre",false,.17f,.18f,.46f},2,.12f);
-    auto timely=transition.sample({"right","centre",false,.18f,.18f,.46f},2,.131f);
+    transition.sample({"right","centre",false,.17f,.18f,.46f},2,.19f);
+    auto timely=transition.sample({"right","centre",false,.18f,.18f,.46f},2,.201f);
     assert(dot(timely.direction-cut.direction,timely.direction-cut.direction)<.000001f);
     VisualCombatClock clock;
     assert(clock.sample(10,1)==10);

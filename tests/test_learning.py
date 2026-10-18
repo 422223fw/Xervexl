@@ -19,9 +19,9 @@ class CombatFixture(unittest.TestCase):
         self.arena = Arena(self.path, seed=5)
         self.a = self.arena.spawn('learner', 'Learner', True, 3)
         self.b = self.arena.spawn('target', 'Target')
-        self.a.update(x=0, z=0, yaw=0, world_id=0, weapon='longsword', hp=100,
+        self.a.update(x=0, z=0, yaw=0, body_yaw=0, world_id=0, weapon='longsword', hp=100,
                       spawn_safe=0, armour='', shield='', helmet='', stamina=100)
-        self.b.update(x=0, z=2, yaw=math.pi, world_id=0, spawn_safe=0)
+        self.b.update(x=0, z=2, yaw=math.pi, body_yaw=math.pi, world_id=0, spawn_safe=0)
         self.arena.fighters = {self.a['id']: self.a, self.b['id']: self.b}
         self.arena.worlds[0]['props'] = []
         self.arena.maintain_bots = lambda: None
@@ -32,6 +32,8 @@ class CombatFixture(unittest.TestCase):
 
     def attack(self, move='left'):
         self.a['attack'] = move
+        from rules import MOVES
+        self.a.update(attack_windup=MOVES[move]['windup'],attack_duration=MOVES[move]['windup']+MOVES[move]['follow'])
         self.arena.learning_attack(self.a)
         return self.a.get('attack_learning')
 
@@ -100,7 +102,7 @@ class LearningTests(CombatFixture):
         self.b['z'] = 1.3
         key = context(self.a, self.b)
         self.arena.learning_decision(self.a, 'block', self.b)
-        self.a.update(block=True, guard_dir='centre', block_since=-10)
+        self.a.update(block=True, guard_dir='right', block_since=-10)
         self.b['attack'] = 'left';self.arena.strike(self.b)
         self.arena.clock = 1;self.arena.learning_tick()
         self.assertEqual(self.a['hp'], 100)
@@ -253,13 +255,13 @@ class EasyCombatTests(CombatFixture):
         self.a['yaw'] = 0;self.b['world_id'] = 1
         self.assertEqual(self.arena.easy_guard(self.a), 'centre')
 
-    def test_holding_auto_guard_does_not_refresh_perfect_parry_time(self):
+    def test_changing_held_direction_does_not_refresh_perfect_parry_time(self):
         self.a['bot'] = False
-        self.a.update(input=dict(block=True, easy_controls=True), last_input=0)
+        self.a.update(input=dict(block=True,guard_dir='up', easy_controls=True), last_input=0)
         self.b.update(attack='overhead', windup=.26)
         self.arena.tick(.03);pressed = self.a['block_since']
         self.b.update(attack='left', attack_started=1, windup=.18)
-        self.a['last_input'] = self.arena.clock;self.arena.tick(.25)
+        self.a['input']['guard_dir']='right';self.a['last_input'] = self.arena.clock;self.arena.tick(.25)
         self.assertEqual(self.a['guard_dir'], 'right')
         self.assertEqual(self.a['block_since'], pressed)
         self.assertEqual(self.a['stamina'], 100)
