@@ -4,6 +4,10 @@ A playable Windows arena with **OpenGL and Vulkan in one native C++ executable**
 
 ## Play
 
+Version 0.10 adds smoother attack arcs with matched contact velocity and acceleration, softer guard transitions, supported-foot walk cycles and a counter-swinging free hand. The server uses the same updated curves and limb positions for collision. Existing attack timing, damage and progression rules are preserved.
+
+Each biome now has its own lighting, haze and sky colours, layered distant ridges, wind-blown tree crowns and cloth banners, worn circular paving, stone courses and nearby ground cover. Snow adds caps to vegetation and ruins; the coast has moving wave bands, and night arenas have moonlight and torch flames. These are procedural visuals in both renderers, with flat playable ground and the existing object collisions. Layered ground drawing prevents the former floor wedges from painting over surface details and characters; intersecting 3D objects still use the prototype's painter ordering.
+
 Double-click **Play-Xervexl.cmd**. It starts a hidden local arena server and opens the game. No Windows administrator privileges are needed. Python 3.10+ is required; Python and the portable C++ compiler are already installed on this computer.
 
 The compiled game is `build/Xervexl.exe`. Auto mode prefers Vulkan and falls back to OpenGL. **Both APIs are in the same file**, selectable in **Settings → Auto / OpenGL / Vulkan**; they do not render the same frame simultaneously. A compatible GPU driver is required. `powershell -NoProfile -ExecutionPolicy Bypass -File start.ps1 -Vulkan` remains supported.
@@ -25,8 +29,8 @@ The compiled game is `build/Xervexl.exe`. Auto mode prefers Vulkan and falls bac
 | Mouse wheel | Smooth zoom from bounded overhead view to first-person and back |
 | Right mouse button | Hold to block; choose left/right/high/centre with A/D/W/S or mouse motion. Cancels your swing immediately; the blade animates into place |
 | F3 | Show/hide authoritative head/body/limb hitboxes and weapon segments nearby |
-| WASD / mouse while blocking | Directional mode only: A left guard, D right guard, W high guard, S centre |
-| Right mouse just before impact | Face and match the incoming attack within 180 ms to disarm; XP + skill |
+| WASD / mouse while blocking | Both control modes: A left guard, D right guard, W high guard, S centre |
+| Right mouse just before impact | Face and physically match the incoming attack within 180 ms for a perfect parry; XP + skill. A disarm also needs the much stricter grip/timing conditions |
 | Z / X / C | Aim at legs / body / head |
 | Q | Disarm an exhausted or recovering opponent |
 | G / hold F | Drop weapon / recover a nearby weapon from the floor |

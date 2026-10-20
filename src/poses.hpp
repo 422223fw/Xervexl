@@ -8,7 +8,7 @@ struct Vec {float x,y,z;Vec operator+(Vec v)const{return{x+v.x,y+v.y,z+v.z};}Vec
 inline float dot(Vec a,Vec b){return a.x*b.x+a.y*b.y+a.z*b.z;}
 inline Vec cross(Vec a,Vec b){return{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x};}
 inline Vec norm(Vec a){float d=std::sqrt(dot(a,a));return a*(1/std::max(.0001f,d));}
-inline float smooth(float t){t=std::clamp(t,0.f,1.f);return t*t*(3-2*t);}
+inline float smooth(float t){t=std::clamp(t,0.f,1.f);return t*t*t*(10+t*(-15+6*t));}
 inline Vec mix(Vec a,Vec b,float t){return a*(1-t)+b*t;}
 inline Vec limit_reach(Vec root,Vec end,float maximum){Vec d=end-root;float length=std::sqrt(dot(d,d));return length>maximum?root+d*(maximum/length):end;}
 inline Vec solve_joint(Vec root,Vec end,Vec bend,float length){
@@ -48,7 +48,24 @@ inline CombatPose blend_pose(const CombatPose& a,const CombatPose& b,float t){
             a.twist+angle_delta(a.twist,b.twist)*t,a.spin+angle_delta(a.spin,b.spin)*t,a.lunge*(1-t)+b.lunge*t};
 }
 inline float hermite(float a,float b,float va,float vb,float t,float span){
-    float t2=t*t,t3=t2*t;return (2*t3-3*t2+1)*a+(t3-2*t2+t)*va*span+(-2*t3+3*t2)*b+(t3-t2)*vb*span;
+    // Quintic Hermite: preserve contact velocity, with zero endpoint acceleration.
+    float t2=t*t,t3=t2*t,t4=t3*t,t5=t4*t;
+    return (1-10*t3+15*t4-6*t5)*a+(t-6*t3+8*t4-3*t5)*va*span
+          +(10*t3-15*t4+6*t5)*b+(-4*t3+7*t4-3*t5)*vb*span;
+}
+struct FootStep{float travel=0,lift=0;};
+inline FootStep foot_step(float gait,float speed,int leg){
+    speed=std::clamp(speed,0.f,1.f);
+    float phase=gait/(2*PI)+(leg<0?.5f:0);phase-=std::floor(phase);
+    // A supported foot stays on the floor; the returning foot lifts at the toe.
+    // Matching endpoint velocities avoids a jerk at lift-off and landing.
+    if(phase<.60f)return {(.27f-.9f*phase)*speed,0};
+    float t=(phase-.60f)/.40f,sine=std::sin(PI*t);
+    return {hermite(-.27f,.27f,-.9f,-.9f,t,.40f)*speed,.13f*sine*sine*speed};
+}
+inline Vec free_hand_offset(bool block,bool shield,float gait,float speed){
+    if(block)return shield?Vec{-.18f,1.37f,.48f}:Vec{-.28f,1.08f,.03f};
+    return {-.37f,1.19f+(1-std::cos(gait*2))*.012f*speed,.21f+std::sin(gait)*.12f*speed};
 }
 struct PoseRate{Vec hand{0,0,0};float yaw=0,pitch=0,twist=0,lunge=0;};
 inline CombatPose pose_segment(const CombatPose& a,const CombatPose& b,float t,float span,PoseRate va={},PoseRate vb={},bool overhead=false){

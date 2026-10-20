@@ -11,4 +11,8 @@ for row in rows:
     for a,b in ((hand,row['hand']),(tip,row['tip'])):
         error=hb.dot(hb.sub(a,b),hb.sub(a,b))**.5;maximum=max(maximum,error)
         if error>.003:raise AssertionError((row['fighter']['attack'],row['fighter']['guard_dir'],row['fighter']['weapon'],error))
+    shapes,_=hb.body_shapes(row['fighter'],row['time'])
+    for shape,expected in zip((shapes[7],shapes[9]),row['feet']):
+        error=hb.dot(hb.sub(shape[3],expected),hb.sub(shape[3],expected))**.5;maximum=max(maximum,error)
+        if error>.003:raise AssertionError(('animated foot differs',error))
 print(json.dumps(dict(native_server_weapon_segments=len(rows),maximum_error_metres=round(maximum,6),passed=True)))

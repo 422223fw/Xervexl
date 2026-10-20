@@ -27,7 +27,7 @@ def dot(a,b):return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]
 def norm(a):return mul(a,1/max(.0001,math.sqrt(dot(a,a))))
 def clamp(x,a,b):return max(a,min(b,x))
 def mix(a,b,t):return tuple(x+(y-x)*t for x,y in zip(a,b))
-def smooth(t):t=clamp(t,0,1);return t*t*(3-2*t)
+def smooth(t):t=clamp(t,0,1);return t*t*t*(10+t*(-15+6*t))
 def wrapped(a):return (a+math.pi)%math.tau-math.pi
 
 def blend(a,b,t):
@@ -87,6 +87,20 @@ def joint(root,end,bend,length):
         outward=(0,axis[2],-axis[1])
     return add(add(root,mul(axis,distance*.5)),mul(norm(outward),math.sqrt(max(0,length*length-distance*distance*.25))))
 
+
+def foot_step(gait,speed,leg):
+    speed=clamp(speed,0,1);phase=(gait/math.tau+(.5 if leg<0 else 0))%1
+    if phase<.60:return (.27-.9*phase)*speed,0.
+    t=(phase-.60)/.40;t2=t*t;t3=t2*t;t4=t3*t;t5=t4*t
+    travel=(1-10*t3+15*t4-6*t5)*(-.27)+(t-6*t3+8*t4-3*t5)*(-.9)*.4+(10*t3-15*t4+6*t5)*.27+(-4*t3+7*t4-3*t5)*(-.9)*.4
+    return travel*speed,.13*math.sin(math.pi*t)**2*speed
+
+
+def free_hand_offset(f):
+    if f.get('block'):return (-.18,1.37,.48) if f.get('shield') else (-.28,1.08,.03)
+    speed=min(1,math.hypot(f.get('move_x',0),f.get('move_z',0))/4.4);gait=f.get('gait',0)
+    return -.37,1.19+(1-math.cos(gait*2))*.012*speed,.21+math.sin(gait)*.12*speed
+
 def skeleton(f,clock,age=None):
     p=pose(f,clock,age);body=f.get('body_yaw',f['yaw'])+p[7]+p[6]
     basis=axes(body);blade_yaw=(f['yaw'] if f.get('block') or f.get('attack') else f.get('body_yaw',f['yaw']))+p[7]
@@ -97,8 +111,7 @@ def skeleton(f,clock,age=None):
         hand=limit(right,hand)
         if two_handed(f):hand=add(limit(left,sub(hand,mul(direction,.11))),mul(direction,.11))
     tip=add(hand,mul(direction,blade_length(f['weapon'])))
-    tucked=f.get('block') and not f.get('shield')
-    other=sub(hand,mul(direction,.11)) if two_handed(f) else limit(left,local(((-.28 if tucked else -.18) if f.get('block') else -.37,(1.08 if tucked else 1.37) if f.get('block') else 1.19,(.03 if tucked else .48) if f.get('block') else .21),basis))
+    other=sub(hand,mul(direction,.11)) if two_handed(f) else limit(left,local(free_hand_offset(f),basis))
     lift=math.sin((.55-f.get('jump',0))/.55*math.pi)*.65 if f.get('jump',0)>0 else 0
     fall=.8 if f.get('downed',0)>0 else f.get('fall',0)
     duration=1.25 if f.get('downed',0)>0 else f.get('fall_duration',1.25)
@@ -128,10 +141,11 @@ def body_shapes(f,clock):
         shapes.extend((('arms','capsule',world(root),world(elbow),.085),('arms','capsule',world(elbow),world(end),.075)))
     hip_yaw=f.get('body_yaw',f['yaw'])+p[7]+p[6]*.25;hip_basis=axes(hip_yaw)
     speed=min(1,math.hypot(f.get('move_x',0),f.get('move_z',0))/4.4);gait=f.get('gait',0)
-    travel=norm((f.get('move_x',0),0,f.get('move_z',0)));step=math.sin(gait)*.19*speed
+    travel=norm((f.get('move_x',0),0,f.get('move_z',0)))
     for sign in (-1,1):
         hip=local((sign*.16,.86,0),hip_basis)
-        ankle=add(add(local((sign*.19,.12+max(0,sign*math.sin(gait))*speed*.09,p[8]*(1 if sign==1 else -.4)),hip_basis),mul(travel,sign*step)),(0,0,0))
+        step,lift=foot_step(gait,speed,sign)
+        ankle=add(local((sign*.19,.12+lift,p[8]*(1 if sign==1 else -.4)),hip_basis),mul(travel,step))
         knee=joint(hip,ankle,hip_basis[2],.44)
         shapes.extend((('legs','capsule',world(hip),world(knee),.105),('legs','capsule',world(knee),world(ankle),.095)))
     shield=('shield','box',world(add(other,mul(basis[2],.10))),oriented,(.275,.375,.10)) if f.get('shield') and f.get('block') else None

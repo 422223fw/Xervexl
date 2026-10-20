@@ -1,7 +1,7 @@
 {
   "name": "Xervexl",
   "company": "motlon",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "native_windows_sword_arena",
   "renderers": ["OpenGL", "Vulkan"],
   "default_server": "http://127.0.0.1:8765",
@@ -11,7 +11,8 @@
   "bot_search_depths": [2, 3, 4, 5],
   "bot_learning": "persistent_online_contextual_action_values_from_server_combat_outcomes",
   "default_combat_controls": "movement_directed_held_attacks_with_optional_manual_guard_mode",
-  "combat_animation": "movement_directed_weapon_carry_with_continuous_contact_arcs_guard_transitions_and_bounded_two_hand_grips",
+  "combat_animation": "quintic_contact_arcs_with_matched_velocity_and_acceleration_supported_steps_and_free_hand_counter_swing",
+  "world_visuals": "biome_lighting_and_haze_layered_ridges_wind_swept_canopies_stone_courses_and_nearby_ground_cover",
   "hit_detection": "server_swept_weapon_segments_against_oriented_body_boxes_and_animated_limb_capsules",
   "guard": "manual_direction_and_physical_blade_contact_with_120ms_shared_animation",
   "hitbox_debug_key": "F3",

@@ -19,7 +19,11 @@ int main(int argc,char** argv){
             blade_pose(f,clock,origin,front,side,weapon_length(weapon),hand,tip,&pose,&right,&left);
             // Pommel uses the visible rear grip rather than the cutting edge.
             if(move=="pommel")tip=hand-norm(tip-hand)*.20f;
-            rows.push_back({{"fighter",f},{"time",clock},{"hand",{hand.x,hand.y,hand.z}},{"tip",{tip.x,tip.y,tip.z}}});
+            json feet=json::array();
+            float hipYaw=bodyYaw-pose.twist*.75f,speed=std::min(1.f,std::hypot(f.value("move_x",0.f),f.value("move_z",0.f))/4.4f);
+            Vec hipFront{std::sin(hipYaw),0,std::cos(hipYaw)},hipSide{std::cos(hipYaw),0,-std::sin(hipYaw)},travel=norm({f.value("move_x",0.f),0,f.value("move_z",0.f)});
+            for(int leg:{-1,1}){auto step=foot_step(f.value("gait",0.f),speed,leg);Vec ankle=origin+hipSide*(leg*.19f)+travel*step.travel+hipFront*(pose.lunge*(leg==1?1:-.4f))+Vec{0,.12f+step.lift,0};feet.push_back({ankle.x,ankle.y,ankle.z});}
+            rows.push_back({{"fighter",f},{"time",clock},{"hand",{hand.x,hand.y,hand.z}},{"tip",{tip.x,tip.y,tip.z}},{"feet",feet}});
         }
     }
     PoseInput guard{"","right",true};guard.guardFrom=combat_pose({"","up",true});guard.guardAge=.06f;

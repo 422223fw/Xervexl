@@ -123,5 +123,23 @@ int main(){
         assert(dot(pose.hand-last.hand,pose.hand-last.hand)<.002f);last=pose;
     }
     assert(dot(last.hand-idle.hand,last.hand-idle.hand)<.000001f);
+    // Contact keeps its velocity; matched zero acceleration removes the old jerk.
+    for(float t:{0.f,1.f}){
+        float h=.0005f;
+        float a=hermite(.2f,.9f,.3f,-.2f,t,.4f),b=hermite(.2f,.9f,.3f,-.2f,t+h,.4f),c=hermite(.2f,.9f,.3f,-.2f,t-h,.4f);
+        assert(std::abs((b-c)/(2*h)-.4f*(t==0?.3f:-.2f))<.003f);
+        assert(std::abs(b+c-2*a)<.000003f);
+    }
+    for(int leg:{-1,1})for(int frame=0;frame<=1000;frame++){
+        float gait=frame*2*PI/1000;auto step=foot_step(gait,1,leg),next=foot_step(gait+.0001f,1,leg);
+        assert(step.lift>=0&&step.lift<=.13001f&&std::abs(step.travel)<.31f);
+        assert(std::abs(next.travel-step.travel)<.001f&&std::abs(next.lift-step.lift)<.001f);
+        assert(foot_step(gait,0,leg).lift==0&&foot_step(gait,0,leg).travel==0);
+        float phase=gait/(2*PI)+(leg<0?.5f:0);phase-=std::floor(phase);
+        if(phase<.6f)assert(step.lift==0);
+        checked++;
+    }
+    assert(foot_step(PI*.2f,1,1).lift==0&&foot_step(PI*.2f,1,-1).lift==0);
+    assert(free_hand_offset(false,false,PI*.5f,1).z>free_hand_offset(false,false,PI*1.5f,1).z);
     std::cout<<checked<<" animation samples passed, plus contact velocity, attached two-hand grips, guard cancellation and bounded visual-clock checks.\n";
 }
