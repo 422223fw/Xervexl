@@ -75,6 +75,21 @@ class HitboxCombatTests(unittest.TestCase):
         self.g.strike(self.a)
         self.assertLess(self.b['hp'],100);self.assertEqual(self.b['parries'],0)
 
+    def test_live_guard_contacts_survive_rotated_views_and_different_tick_sizes(self):
+        for yaw in (0,.7,2.6,4.8):
+            for dt in (.016,.03,.10):
+                for attack,guard in (('left','right'),('right','left'),('overhead','up'),('thrust','centre')):
+                    self.reset()
+                    self.a.update(yaw=yaw,body_yaw=yaw,attack='',windup=0,cooldown=0)
+                    self.b.update(x=math.sin(yaw)*2,z=math.cos(yaw)*2,yaw=yaw+math.pi,body_yaw=yaw+math.pi,block=True,guard_dir=guard,block_since=-10)
+                    for _ in range(100):
+                        self.a.update(input=dict(attack=attack,yaw=yaw),last_input=self.g.clock)
+                        self.b.update(input=dict(block=True,guard_dir=guard,yaw=yaw+math.pi),last_input=self.g.clock)
+                        self.g.tick(dt)
+                        if any(e['kind'] in ('hit','block','parry') for e in self.g.events):break
+                    self.assertEqual(self.b['hp'],100,(yaw,dt,attack))
+                    self.assertTrue(any(e['kind']=='block' for e in self.g.events),(yaw,dt,attack))
+
     def test_matching_guard_looking_away_does_not_stop_a_blade(self):
         self.b.update(yaw=0,body_yaw=0,block=True,guard_dir='right',block_since=0)
         self.g.strike(self.a);self.assertLess(self.b['hp'],100)

@@ -161,12 +161,35 @@ struct VisualCombatClock{
         value=std::max(value,observed+std::clamp(localTime-received,0.f,.09f));return value;
     }
 };
+struct VisualMotion {
+    float x=0,z=0,lastSeen=0;bool ready=false;
+    void sample(float targetX,float targetZ,float localTime){
+        float dt=std::clamp(localTime-lastSeen,0.f,.1f);lastSeen=localTime;
+        if(!ready){x=targetX;z=targetZ;ready=true;return;}
+        float weight=1-std::exp(-dt*22);x+=(targetX-x)*weight;z+=(targetZ-z)*weight;
+        if(std::hypot(x,z)<.005f&&std::hypot(targetX,targetZ)<.005f)x=z=0;
+    }
+};
+inline float motion_elapsed(float serverTime,float visualTime){return std::clamp(visualTime-serverTime,0.f,.09f);}
+struct ActionReadout{const char* label;float remaining,progress;};
+inline ActionReadout action_readout(const std::string& attack,float age,float windup,float duration,float cooldown,float dodge,bool block,bool ranged=false){
+    if(dodge>0)return {"EVADING / ATTACK PAUSED",dodge,std::clamp(1-dodge/.32f,0.f,1.f)};
+    if(block)return {cooldown>0?"GUARD / RECOVERING":"GUARD / READY",cooldown,std::clamp(1-cooldown/std::max(duration,.01f),0.f,1.f)};
+    if(!attack.empty()&&age>=0&&age<duration){
+        float start=ranged?windup:windup*.72f,end=ranged?windup+.03f:windup+(duration-windup)*.32f;
+        if(attack=="feint")return {"FEINT",duration-age,std::clamp(age/duration,0.f,1.f)};
+        if(age<start)return {"WINDUP",start-age,std::clamp(age/std::max(start,.01f),0.f,1.f)};
+        if(age<end)return {ranged?"RELEASE":"CONTACT",end-age,std::clamp((age-start)/std::max(end-start,.01f),0.f,1.f)};
+    }
+    if(cooldown>0)return {"RECOVERING",cooldown,std::clamp(1-cooldown/std::max(duration,.01f),0.f,1.f)};
+    return {"READY",0,1};
+}
 struct PoseTransition{
     CombatPose displayed,from;PoseInput previous;int previousAttack=-1;float changed=0,span=0,lastSeen=0,motionSide=0,motionForward=0,motionGait=0;bool ready=false;
     CombatPose sample(const PoseInput& input,int attackId,float localTime){
         float dt=std::clamp(localTime-lastSeen,0.f,.1f);lastSeen=localTime;
         if(!ready){motionSide=input.moveSide;motionForward=input.moveForward;motionGait=input.gait;}
-        else{float blend=1-std::exp(-dt*16);motionSide+=(input.moveSide-motionSide)*blend;motionForward+=(input.moveForward-motionForward)*blend;motionGait+=(input.gait-motionGait)*blend;}
+        else{float blend=1-std::exp(-dt*16);motionSide+=(input.moveSide-motionSide)*blend;motionForward+=(input.moveForward-motionForward)*blend;motionGait=input.gait;}
         PoseInput visual=input;visual.moveSide=motionSide;visual.moveForward=motionForward;visual.gait=motionGait;
         CombatPose target=combat_pose(visual);
         if(!ready){ready=true;previous=input;previousAttack=attackId;displayed=target;return target;}

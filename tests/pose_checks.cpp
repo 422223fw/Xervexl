@@ -141,5 +141,17 @@ int main(){
     }
     assert(foot_step(PI*.2f,1,1).lift==0&&foot_step(PI*.2f,1,-1).lift==0);
     assert(free_hand_offset(false,false,PI*.5f,1).z>free_hand_offset(false,false,PI*1.5f,1).z);
-    std::cout<<checked<<" animation samples passed, plus contact velocity, attached two-hand grips, guard cancellation and bounded visual-clock checks.\n";
+    VisualMotion motion;motion.sample(4.4f,0,0);float previousSpeed=motion.x;
+    for(int i=1;i<=120;i++){
+        motion.sample(0,0,i/120.f);assert(motion.x<=previousSpeed&&previousSpeed-motion.x<.8f);previousSpeed=motion.x;
+    }
+    assert(motion.x==0);motion.sample(-4.4f,0,1.008f);assert(motion.x<0&&motion.x>-4.4f);
+    assert(motion_elapsed(10,10.02f)>.019f&&motion_elapsed(10,20)==.09f&&motion_elapsed(10,9)==0);
+    assert(std::string(action_readout("left",.1f,.24f,.6f,.5f,0,false).label)=="WINDUP");
+    assert(std::string(action_readout("left",.24f,.24f,.6f,.5f,0,false).label)=="CONTACT");
+    assert(std::string(action_readout("left",.5f,.24f,.6f,.2f,0,false).label)=="RECOVERING");
+    assert(std::string(action_readout("",0,.24f,.6f,.2f,0,true).label)=="GUARD / RECOVERING");
+    assert(std::string(action_readout("",0,.24f,.6f,0,0,false).label)=="READY");
+    assert(std::string(action_readout("left",.24f,.24f,.6f,0,.3f,false).label)=="EVADING / ATTACK PAUSED");
+    std::cout<<checked<<" animation samples passed, plus contact velocity, attached two-hand grips, guard cancellation, motion settling and phase HUD checks.\n";
 }

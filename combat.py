@@ -11,6 +11,13 @@ def angle(a): return (a+math.pi)%math.tau-math.pi
 
 
 class Combat:
+    def cancel_attack(self,f,minimum_recovery=0.):
+        """Defence interrupts the swing without refunding its recovery or cost."""
+        ticket=f.get('attack_learning')
+        if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
+        f.update(attack='',windup=0.,queued_attack='',queued_repeat=False)
+        f['cooldown']=max(f['cooldown'],minimum_recovery)
+
     def emit(self,kind,**fields):
         self.learning_event(kind,fields)
         self.event_serial += 1
@@ -188,7 +195,7 @@ class Combat:
             if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
 
     def perform_strike(self,attacker):
-        if attacker["spawn_safe"]>0 or attacker["dead"]>0 or attacker["disarmed"]>0 or attacker["fall"]>0 or attacker.get('downed',0)>0:return
+        if attacker["spawn_safe"]>0 or attacker["dead"]>0 or attacker["disarmed"]>0 or attacker["fall"]>0 or attacker.get('downed',0)>0 or attacker['dodge']>0:return
         item=ITEMS[attacker["weapon"]]
         if attacker['attack']=='feint':return
         if item["family"]=="rope":self.fire_rope(attacker);return
@@ -205,7 +212,7 @@ class Combat:
         return cache[f['id']]
 
     def sweep_melee(self,attacker,start,end,resolved):
-        if end<=start or attacker['dead']>0 or attacker['spawn_safe']>0 or attacker['fall']>0 or attacker['block'] or attacker.get('downed',0)>0:return
+        if end<=start or attacker['dead']>0 or attacker['spawn_safe']>0 or attacker['fall']>0 or attacker['block'] or attacker.get('downed',0)>0 or attacker['dodge']>0:return
         item=ITEMS[attacker['weapon']];attack=attacker['attack'];move=MOVES.get(attack)
         if not move:return
         nearby=[v for v in self.fighters.values() if v['id'] not in resolved and v['dead']<=0 and v['spawn_safe']<=0 and v['dodge']<=0 and self.can_fight(attacker,v)
@@ -256,7 +263,7 @@ class Combat:
             if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
 
     def shoot(self,attacker,item,spell=""):
-        if attacker["dead"]>0 or attacker["spawn_safe"]>0:return
+        if attacker["dead"]>0 or attacker["spawn_safe"]>0 or attacker['dodge']>0:return
         yaw=attacker["yaw"];pitch=attacker.get("aim_pitch",0.)
         speed=item.get("speed",20)
         height=TARGET_HEIGHTS[attacker.get("aim_zone","body")]
@@ -272,7 +279,8 @@ class Combat:
 
     def cast_spell(self,f):
         spell=ITEMS.get(f["spell"],{})
-        if not spell or f["spell_cd"]>0 or f["stamina"]<spell["cost"] or f["dead"]>0 or f["spawn_safe"]>0:return False
+        if not spell or f["spell_cd"]>0 or f["stamina"]<spell["cost"] or f["dead"]>0 or f['dodge']>0 or f['fall']>0 or f.get('downed',0)>0:return False
+        f['spawn_safe']=0.
         f["stamina"]-=spell["cost"];f["spell_cd"]=spell["cooldown"]
         if f["spell"]=="heal":f["hp"]=min(f["max_hp"],f["hp"]+spell["healing"])
         elif f["spell"]=="ward":f["ward"]=spell["absorb"];f["ward_time"]=3.

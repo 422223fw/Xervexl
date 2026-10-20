@@ -504,13 +504,12 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 if f["block"]:
                     f["queued_attack"]=""
                     if f["windup"]>0 or f["attack"]:
-                        ticket=f.get('attack_learning')
-                        if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
-                        f["windup"]=0.;f["attack"]="";f["cooldown"]=min(f["cooldown"],.12)
+                        self.cancel_attack(f,.12)
                     if not was_blocking:f["block_since"]=self.clock
                 if inp.get("dodge") and not f["last_dodge"] and f["stamina"] >= 24 and f["dodge"]<=0:
                     f["dodge"] = .32
                     f["stamina"] -= 24
+                    self.cancel_attack(f,.32)
                 if inp.get("jump") and not f["last_jump"] and f["jump"]<=0 and f["stamina"] >= 8:
                     f["jump"] = .55
                     f["stamina"] -= 8
@@ -538,7 +537,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 if easy and not automatic and f.get('queued_repeat'):
                     f['queued_attack']='';f['queued_repeat']=False
                 repeat=automatic and f['cooldown']<=.20
-                if pressed and (not f["last_attack"] or repeat) and not f["block"] and f["disarmed"]<=0:
+                if pressed and (not f["last_attack"] or repeat) and not f["block"] and f["disarmed"]<=0 and f['dodge']<=0:
                     f["queued_attack"]=pressed;f["queued_until"]=self.clock+.25
                     f['queued_repeat']=bool(repeat and f['last_attack'])
                     f['queued_auto_cut']=automatic
@@ -551,7 +550,8 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                     attack='left' if ranged or ITEMS[f['weapon']]['family']=='rope' else self.walking_cut(f,inp)
                 move=MOVES.get(attack,MOVES["left"])
                 cost = 18 if ITEMS[f["weapon"]]["family"]=="rope" else 10 if ranged else move["cost"]
-                if attack and f["cooldown"]<=0 and f["stamina"]>=cost and not f["block"] and f["disarmed"]<=0:
+                if attack and f["cooldown"]<=0 and f["stamina"]>=cost and not f["block"] and f["disarmed"]<=0 and f['dodge']<=0:
+                    f['spawn_safe']=0.
                     if easy and f.get('queued_auto_cut') and attack in ('left','right') and not ranged:f['last_easy_cut']=attack
                     f["attack"] = attack
                     f["attack_id"] += 1
