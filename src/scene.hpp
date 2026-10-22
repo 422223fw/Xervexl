@@ -7,12 +7,12 @@
 #include "poses.hpp"
 struct Colour{float r,g,b,a=1;Colour operator*(float f)const{return{r*f,g*f,b*f,a};}};
 const Colour GOLD{.91f,.64f,.29f},INK{.045f,.065f,.068f},WHITE{.93f,.92f,.85f},MUTED{.55f,.62f,.60f};
-struct Triangle{Vec a,b,c;Colour colour;float depth;};
+struct Triangle{Vec a,b,c;Colour colour;float depth;size_t worldIndex=0;};
 
 struct Canvas{
-    std::vector<Vertex> mesh;std::vector<Triangle> triangles;
+    std::vector<Vertex> mesh;std::vector<Triangle> triangles,worldTriangles;bool nativeDepth=false;size_t backgroundEnd=0;
     Vec camera{},forward{},right{},up{},focus{},sunDirection{-.5f,1,.3f};float aspect=1.6f,ambient=.47f,sunlight=.53f,fogStart=32,fogRange=150;Colour fogColour{.61f,.67f,.65f};bool following=false;
-    void begin(int w,int h){mesh.clear();triangles.clear();aspect=static_cast<float>(w)/h;}
+    void begin(int w,int h){mesh.clear();triangles.clear();worldTriangles.clear();backgroundEnd=0;aspect=static_cast<float>(w)/h;}
     void triangle(float x1,float y1,float x2,float y2,float x3,float y3,Colour c){
         mesh.push_back({x1/1280,y1/800,c.r,c.g,c.b,c.a});mesh.push_back({x2/1280,y2/800,c.r,c.g,c.b,c.a});mesh.push_back({x3/1280,y3/800,c.r,c.g,c.b,c.a});
     }
@@ -42,7 +42,8 @@ struct Canvas{
         float depth=dot((a+b+c)*(1.f/3)-camera,forward);if(std::max({dot(a-camera,forward),dot(b-camera,forward),dot(c-camera,forward)})<.12f)return;
         if(shade){Vec n=norm(cross(b-a,c-a));float light=ambient+sunlight*std::abs(dot(n,sunDirection));colour=colour*light;}
         float fog=std::clamp((depth-fogStart)/fogRange,0.f,.88f);colour.r=colour.r*(1-fog)+fogColour.r*fog;colour.g=colour.g*(1-fog)+fogColour.g*fog;colour.b=colour.b*(1-fog)+fogColour.b*fog;
-        triangles.push_back({a,b,c,colour,depth});
+        if(worldTriangles.empty())backgroundEnd=mesh.size();
+        triangles.push_back({a,b,c,colour,depth,worldTriangles.size()});worldTriangles.push_back(triangles.back());
     }
     void quad(Vec a,Vec b,Vec c,Vec d,Colour col,bool shade=true){tri3(a,b,c,col,shade);tri3(a,c,d,col,shade);}
     void box(Vec p,Vec size,Colour col,float yaw=0){
@@ -59,6 +60,7 @@ struct Canvas{
         for(int j=0;j<rings;j++){float a=-PI/2+j*PI/rings,b=-PI/2+(j+1)*PI/rings;for(int i=0;i<sides;i++){float c=i*2*PI/sides,d=(i+1)*2*PI/sides;quad(point(a,c),point(a,d),point(b,d),point(b,c),colour);}}
     }
     void flush3(){
+        if(nativeDepth)return;
         std::sort(triangles.begin(),triangles.end(),[](const Triangle& a,const Triangle& b){return a.depth>b.depth;});
         for(auto& t:triangles){
             float da=dot(t.a-camera,forward),db=dot(t.b-camera,forward),dc=dot(t.c-camera,forward);
@@ -77,7 +79,7 @@ struct Canvas{
 inline std::string weapon_family(const std::string& id){
     if(id=="fists")return "unarmed";if(id=="bow"||id=="longbow"||id=="moonbow")return "bow";
     if(id=="crossbow"||id=="slingshot")return id;if(id=="emberstaff")return "staff";
-    if(id=="axe"||id=="halberd")return "axe";if(id=="warhammer")return "mace";if(id=="grappling_rope"||id=="lasso")return "rope";if(id=="mace"||id=="spear")return id;return "blade";
+    if(id=="axe"||id=="halberd"||id=="pickaxe")return "axe";if(id=="warhammer")return "mace";if(id=="grappling_rope"||id=="lasso")return "rope";if(id=="mace"||id=="spear")return id;return "blade";
 }
 inline float weapon_length(const std::string& id){return id=="knife"||id=="dagger"?.55f:id=="greatsword"?1.85f:id=="spear"||id=="halberd"?2.3f:id=="longsword"?1.5f:id=="estoc"?1.35f:1.15f;}
 inline void held_equipment(Canvas& c,const std::string& id,Vec hand,Vec tip,Vec side,Vec front){
@@ -130,7 +132,7 @@ inline void debug_hitboxes(Canvas& c,const json& world,const std::string& hidden
 }
 inline void battlefield_objects(Canvas& c,const json& world,float){
     if(world.contains("events"))for(const auto& e:world["events"]){float age=world.value("time",0.f)-e.value("time",0.f);std::string kind=e.value("kind",std::string{});if((kind=="parry"||kind=="block")&&age>=0&&age<.22f&&e.contains("point")&&!e["point"].is_null()){Vec p{e["point"][0],e["point"][1],e["point"][2]};for(int i=0;i<6;i++){float a=i*PI/3;c.beam(p,p+Vec{std::cos(a),std::sin(a),.25f}*(.08f+age*.8f),.008f,{1,.78f,.35f});}}}
-    if(world.contains("drops"))for(const auto& d:world["drops"]){float y=d.value("y",.06f),a=d.value("age",0.f)*2;auto hint=world.value("pickup",json::object());if(y<=.22f)a=1.85f;Vec p{d.value("x",0.f),y,d.value("z",0.f)},front{std::sin(a),0,std::cos(a)},side{std::cos(a),0,-std::sin(a)};held_equipment(c,d.value("weapon",std::string("knife")),p,p+front*1.1f,side,front);if(!hint.empty()&&hint.value("id",std::string{})==d.value("id",std::string{})){Colour glow{.95f,.69f,.32f,.75f};for(int i=0;i<16;i++){float t=i*PI/8;Vec marker=p+Vec{std::sin(t)*.42f,.015f,std::cos(t)*.42f};c.box(marker,{.045f,.012f,.045f},glow);}}}
+    if(world.contains("drops"))for(const auto& d:world["drops"]){float y=d.value("y",.06f),a=d.value("age",0.f)*2;auto hint=world.value("pickup",json::object());if(y<=.22f||(d.value("vy",0.f)==0&&d.value("age",0.f)>.5f))a=1.85f;Vec p{d.value("x",0.f),y,d.value("z",0.f)},front{std::sin(a),0,std::cos(a)},side{std::cos(a),0,-std::sin(a)};held_equipment(c,d.value("weapon",std::string("knife")),p,p+front*1.1f,side,front);if(!hint.empty()&&hint.value("id",std::string{})==d.value("id",std::string{})){Colour glow{.95f,.69f,.32f,.75f};for(int i=0;i<16;i++){float t=i*PI/8;Vec marker=p+Vec{std::sin(t)*.42f,.015f,std::cos(t)*.42f};c.box(marker,{.045f,.012f,.045f},glow);}}}
     if(world.contains("projectiles"))for(const auto& p:world["projectiles"]){Vec v{p.value("x",0.f),p.value("y",1.f),p.value("z",0.f)},direction=norm({p.value("vx",0.f),p.value("vy",0.f),p.value("vz",1.f)});std::string kind=p.value("kind",std::string{});
         if(kind=="slingshot")c.ellipsoid(v,{.055f,.055f,.055f},{.53f,.55f,.51f},0,4,6);
         else if(kind=="firebolt"||kind=="frostbolt"||kind=="staff"){Colour col=kind=="frostbolt"?Colour{.35f,.77f,.95f}:Colour{1,.51f,.18f};c.ellipsoid(v,{.12f,.12f,.12f},col,0,4,8);c.beam(v-direction*.65f,v,.027f,col);}
@@ -147,6 +149,7 @@ inline PoseInput pose_input(const json& f,float time,bool firstPerson=false){
         const auto& p=f["guard_from"];input.guardAge=time-f.value("guard_changed",time);
         input.guardFrom={{p[0],p[1],p[2]},{p[3],p[4],p[5]},p[6],p[7],p[8]};
     }
+    if(f.value("build_mode",false)&&f.value("mine_progress",0.f)>0){input.attack="overhead";input.age=std::fmod(std::max(0.f,time-f.value("mining_started",time)),.85f);input.windup=.34f*.85f/.76f;input.duration=.85f;input.aim="legs";}
     return input;
 }
 inline CombatPose pose_for(const json& f,float time){return combat_pose(pose_input(f,time));}
@@ -168,12 +171,13 @@ inline void fighter(Canvas& c,const json& f,float time,bool self=false,const Com
     if(f.value("dead",0.f)>0)return;
     CombatPose pose=visual?*visual:pose_for(f,time);float x=f.value("x",0.f),z=f.value("z",0.f),bodyYaw=f.value("body_yaw",f.value("yaw",0.f)),yaw=bodyYaw+pose.spin+pose.twist;
     float jump=f.value("jump",0.f);float lift=jump>0?std::sin((.55f-jump)/.55f*PI)*.65f:0;
-    Vec p{x,lift,z};Vec front{std::sin(yaw),0,std::cos(yaw)},side{std::cos(yaw),0,-std::sin(yaw)};
+    Vec p{x,lift+f.value("y",0.f),z};Vec front{std::sin(yaw),0,std::cos(yaw)},side{std::cos(yaw),0,-std::sin(yaw)};
     float hipYaw=bodyYaw+pose.spin+pose.twist*.25f,bladeYaw=(f.value("block",false)||!f.value("attack",std::string{}).empty()?f.value("yaw",bodyYaw):bodyYaw)+pose.spin;
     Vec hipFront{std::sin(hipYaw),0,std::cos(hipYaw)},hipSide{std::cos(hipYaw),0,-std::sin(hipYaw)},bladeFront{std::sin(bladeYaw),0,std::cos(bladeYaw)},bladeSide{std::cos(bladeYaw),0,-std::sin(bladeYaw)};
     std::string id=f.value("id",std::string{});unsigned hash=0;for(unsigned char a:id)hash=hash*31+a;
     Colour cloth=self?Colour{.21f,.34f,.32f}:Colour{.28f+float(hash%4)*.07f,.18f+float(hash%3)*.05f,.13f+float(hash%5)*.04f};
     Colour skin{.69f,.49f,.34f},metal{.56f,.59f,.57f},dark{.18f,.18f,.16f};
+    auto mob=f.value("mob_kind",std::string{});if(mob=="golem"){skin={.48f,.49f,.44f};cloth={.34f,.36f,.32f};dark={.25f,.27f,.24f};}else if(mob=="revenant"){skin={.54f,.62f,.53f};cloth={.16f,.22f,.20f};}
     Vec relative=p+Vec{0,1,0}-c.camera;float depth=dot(relative,c.forward);
     if(!self&&(depth<-3.5f||std::abs(dot(relative,c.right))>std::max(0.f,depth)*.915f*c.aspect+3.5f||std::abs(dot(relative,c.up))>std::max(0.f,depth)*.915f+3.5f))return;
     if(!self&&dot(p-c.camera,p-c.camera)>14*14&&f.value("downed",0.f)<=0){
@@ -183,7 +187,7 @@ inline void fighter(Canvas& c,const json& f,float time,bool self=false,const Com
         Vec hand,tip;blade_pose(f,time,p,bladeFront,bladeSide,weapon_length(f.value("weapon",std::string("knife"))),hand,tip,&pose);c.beam(p+bladeSide*.30f+Vec{0,1.43f,0},hand,.07f,cloth);if(two_handed(f))c.beam(p-bladeSide*.30f+Vec{0,1.43f,0},hand-norm(tip-hand)*.11f,.07f,cloth);held_equipment(c,f.value("weapon",std::string("knife")),hand,tip,bladeSide,bladeFront);return;
     }
     // Flattened ground shadow.
-    for(int i=0;i<16;i++){float a=i*2*PI/16,b=(i+1)*2*PI/16;c.tri3({x,.02f,z},{x+std::sin(a)*.7f,.02f,z+std::cos(a)*.45f},{x+std::sin(b)*.7f,.02f,z+std::cos(b)*.45f},{.21f,.20f,.16f,.45f},false);}
+    for(int i=0;i<16;i++){float a=i*2*PI/16,b=(i+1)*2*PI/16;c.tri3({x,p.y+.02f,z},{x+std::sin(a)*.7f,p.y+.02f,z+std::cos(a)*.45f},{x+std::sin(b)*.7f,p.y+.02f,z+std::cos(b)*.45f},{.21f,.20f,.16f,.45f},false);}
     size_t bodyBegin=c.triangles.size();float moving=std::min(1.f,std::hypot(f.value("move_x",0.f),f.value("move_z",0.f))/4.4f);Vec travel=norm({f.value("move_x",0.f),0,f.value("move_z",0.f)});
     for(int leg:{-1,1}){auto step=foot_step(f.value("gait",0.f),moving,leg);Vec hip=p+hipSide*(leg*.16f)+Vec{0,.86f,0},ankle=p+hipSide*(leg*.19f)+travel*step.travel+hipFront*(pose.lunge*(leg==1?1:-.4f))+Vec{0,.12f+step.lift,0};Vec knee=solve_joint(hip,ankle,hipFront,.44f);c.beam(hip,knee,.105f,dark);c.ellipsoid(knee,{.105f,.105f,.105f},dark,hipYaw,4,6);c.beam(knee,ankle,.087f,dark);c.box(ankle+hipFront*.055f-Vec{0,.025f,0},{.23f,.19f,.37f},dark,hipYaw);}
     std::string armourId=f.value("armour",std::string{});Colour torso=armourId.empty()?cloth:armourId=="leather"?Colour{.34f,.25f,.17f}:armourId=="brigandine"?Colour{.29f,.23f,.20f}:armourId=="mail"?Colour{.43f,.46f,.45f}:metal;
@@ -204,5 +208,5 @@ inline void fighter(Canvas& c,const json& f,float time,bool self=false,const Com
     held_equipment(c,weapon,hand,tip,bladeSide,bladeFront);
     Vec free=free_hand_offset(block,!f.value("shield",std::string{}).empty(),f.value("gait",0.f),moving);Vec left=p+side*free.x+front*free.z+Vec{0,free.y,0};if(two_handed(f))left=hand-norm(tip-hand)*.11f;else left=limit_reach(leftShoulder,left,.70f);Vec leftElbow=solve_joint(leftShoulder,left,-side-Vec{0,.6f,0},.36f);c.beam(leftShoulder,leftElbow,.08f,cloth);c.beam(leftElbow,left,.067f,cloth);c.box(left,{.14f,.14f,.14f},skin,yaw);
     if(!f.value("shield",std::string{}).empty()){c.box(left+front*.1f,{.55f,.75f,.13f},dark,yaw);c.box(left+front*.18f,{.48f,.66f,.05f},metal,yaw);c.box(left+front*.22f,{.12f,.14f,.07f},GOLD,yaw);}
-    float fall=f.value("fall",0.f);if(fall>0){float duration=f.value("fall_duration",1.25f),pose=std::min(1.f,(duration-fall)*7)*std::min(1.f,fall*4),a=pose*PI*.48f;auto rotate=[&](Vec v){Vec d=v-p;float localY=d.y,localZ=dot(d,front);return p+side*dot(d,side)+Vec{0,localY*std::cos(a)-localZ*std::sin(a)+.08f,0}+front*(localY*std::sin(a)+localZ*std::cos(a));};for(size_t i=bodyBegin;i<c.triangles.size();i++){auto& t=c.triangles[i];t.a=rotate(t.a);t.b=rotate(t.b);t.c=rotate(t.c);t.depth=dot((t.a+t.b+t.c)*(1.f/3)-c.camera,c.forward);}}
+    float fall=f.value("fall",0.f);if(fall>0){float duration=f.value("fall_duration",1.25f),pose=std::min(1.f,(duration-fall)*7)*std::min(1.f,fall*4),a=pose*PI*.48f;auto rotate=[&](Vec v){Vec d=v-p;float localY=d.y,localZ=dot(d,front);return p+side*dot(d,side)+Vec{0,localY*std::cos(a)-localZ*std::sin(a)+.08f,0}+front*(localY*std::sin(a)+localZ*std::cos(a));};for(size_t i=bodyBegin;i<c.triangles.size();i++){auto& t=c.triangles[i];t.a=rotate(t.a);t.b=rotate(t.b);t.c=rotate(t.c);t.depth=dot((t.a+t.b+t.c)*(1.f/3)-c.camera,c.forward);c.worldTriangles[t.worldIndex]=t;}}
 }

@@ -10,3 +10,5 @@ __pycache__/
 *.exe
 *.dll
 screenshots/
+runtime/
+**/target/

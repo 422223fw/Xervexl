@@ -3,7 +3,7 @@ import math
 import sys
 from functools import lru_cache
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 PROGRESSION_VERSION = 1
 HEALTH_REGEN_DELAY = 4.
 HEALTH_REGEN_RATE = 2.
@@ -68,6 +68,7 @@ GEAR += [dict(id="stability",name="Permanent footing",price=16000,kind="upgrade"
 GEAR += [dict(id="grip",name="Permanent grip",price=4000,kind="upgrade",repeatable=True)]
 ITEMS = {i["id"]:i for i in WEAPONS+GEAR+SPELLS}
 CATALOG = [i for i in WEAPONS+GEAR+SPELLS if not i.get("hidden")]
+ITEMS['pickaxe']=dict(id='pickaxe',name='Stone pickaxe',price=0,damage=14,reach=2.2,cooldown=.82,family='axe',hidden=True)
 RANGED = {"bow","crossbow","slingshot","staff"}
 TARGET_HEIGHTS = {"head":1.86,"body":1.25,"legs":.55}
 BODY_MULTIPLIERS = {"head":1.45,"body":1.,"arms":.82,"legs":.68}

@@ -23,6 +23,8 @@ from rules import (VERSION,WEAPONS,GEAR,CATALOG,ITEMS,RANGED,PERSISTENT,
                    complete_account,level_for_xp,xp_for_level,health_price,stability_price,grip_price,grip_risk_multiplier,
                    PROGRESSION_VERSION,migrate_progression,public_integer,MOVES)
 from combat import Combat
+from social import Social
+from realms import Realms
 import hitboxes as hb
 from arena_features import ArenaFeatures, SERVER_CAPACITY
 from bot_brain import BotBrain
@@ -55,7 +57,7 @@ class AuthenticationError(ValueError):
     pass
 
 
-class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
+class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
     def __init__(self, data_path=None, seed=None):
         self.path = Path(data_path or ROOT / "data" / "accounts.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +91,8 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
         self.rng.shuffle(self.bot_depths)
         self.setup_worlds(seed)
         self.setup_modes()
+        self.setup_social()
+        self.setup_realms()
         self.maintain_bots()
 
     def save(self):
@@ -129,7 +133,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                  yaw=angle+math.pi, hp=100., stamina=100., weapon="knife", shield="", armour="", kills=0, deaths=0,
                  cooldown=0., windup=0., attack="", attack_id=0, block=False, block_since=-999., jump=0., dodge=0., dead=0., spawn_safe=1.5,
                  input={}, last_input=0., last_attack=False, last_dodge=False, last_jump=False, plan_at=0., action="advance")
-        f.update(xp=0,level=1,skill=0,coins=100,parries=0,disarms=0,health_upgrades=0,max_hp=100.,helmet="",spell="",
+        f.update(y=0.,vy=0.,build_mode=False,mine_progress=0.,mining_started=0.,last_place=False,xp=0,level=1,skill=0,coins=100,parries=0,disarms=0,health_upgrades=0,max_hp=100.,helmet="",spell="",
                  spell_cd=0.,ward=0.,ward_time=0.,slow=0.,disarmed=0.,aim_zone="body",aim_pitch=0.,
                  burn=0.,burn_tick=0.,burn_source="",last_hurt=self.clock,regen_rate=0.,
                  last_drop=False,last_pickup=False,last_cast=False)
@@ -155,11 +159,11 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
         return f
 
     def maintain_bots(self):
-        human_rooms={f['world_id'] for f in self.fighters.values() if not f['bot']}
+        human_rooms={f['world_id'] for f in self.fighters.values() if not f['bot'] and not self.is_realm(f)}
         active={r for r in human_rooms if not self.worlds[r].get('mode_id')}
         if not human_rooms:active={self.default_world}
         for f in list(self.fighters.values()):
-            if f["bot"] and f["world_id"] not in active and not self.worlds[f['world_id']].get('mode_id'):del self.fighters[f["id"]]
+            if f["bot"] and not self.is_realm(f) and f["world_id"] not in active and not self.worlds[f['world_id']].get('mode_id'):del self.fighters[f["id"]]
         for world_id in active:
             humans=sum(not f["bot"] and f["world_id"]==world_id for f in self.fighters.values())
             wanted=max(0,10-humans);bots=[f for f in self.fighters.values() if f["bot"] and f["world_id"]==world_id]
@@ -195,6 +199,8 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
 
     def join_locked(self, s,world_id=None,change_world=False):
         self.require_account(s)
+        if type(world_id) is int and 0<=world_id<len(self.worlds) and self.worlds[world_id].get('realm_id'):
+            return self.join_realm(s,dict(id=self.worlds[world_id]['realm_id']))['player']
         current=self.fighters.get(s['fighter'])
         if current and not change_world:
             self.ensure_spare(current['world_id'])
@@ -211,6 +217,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
         if not s["guest"]:
             for other in self.sessions.values():
                 if other["user"] is s["user"] and other["fighter"] in self.fighters:
+                    self.realm_checkpoint(self.fighters.get(other['fighter']))
                     self.fighters.pop(other["fighter"], None)
                     other["fighter"] = ""
         pid = "p-" + secrets.token_hex(5)
@@ -295,12 +302,30 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 # Idempotent so a logout queued while offline can be retried.
                 self.remembered.remove(token)
                 s=self.sessions.pop(token,None)
-                if s:self.fighters.pop(s['fighter'],None)
+                if s:
+                    self.realm_checkpoint(self.fighters.get(s['fighter']));self.flush_realms()
+                    self.fighters.pop(s['fighter'],None)
                 self.maintain_bots()
                 return dict(logged_out=True,message="Logged out. Your account progress is saved.")
             s = self.authenticate(token)
             user = s["user"]
             self.require_account(s)
+            if route=='/social':return dict(social=self.social_status(s))
+            if route=='/social/request':return self.social_request(s,body)
+            if route=='/social/respond':return self.social_respond(s,body)
+            if route=='/social/remove':return self.social_remove(s,body)
+            if route=='/realms':return dict(realms=self.realm_list(s))
+            if route=='/realms/create':return self.create_realm(s,body)
+            if route=='/realms/settings':return self.configure_realm(s,body)
+            if route=='/realms/join':return self.join_realm(s,body)
+            actor=self.fighters.get(s['fighter'])
+            if self.is_realm(actor):
+                if not self.realm_access(self.realm_for(actor),user['username']):
+                    self.realm_checkpoint(actor);self.flush_realms();self.fighters.pop(actor['id'],None);s['fighter']=''
+                elif route in ('/inventory/assign','/inventory/switch'):return self.realm_inventory(s,route,body)
+                elif route.startswith('/shop/'):raise ValueError('Gather materials and craft equipment in survival worlds.')
+            if route=='/realms/craft':return self.realm_craft(s,body)
+            if route=='/realms/equip':return self.realm_equip(s,body)
             if route=='/workshop/save':return self.save_blueprint(s,body)
             if route=='/workshop/load':
                 blueprint=self.blueprints.get(body.get('id'))
@@ -308,7 +333,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 return dict(blueprint=blueprint,blueprint_id=body['id'])
             if route=='/modes/join':return self.join_mode(s,str(body.get('mode','')),body.get('biome'))
             if route=='/auth/resume':
-                return dict(authenticated=True,profile=self.profile(user),catalog=CATALOG,worlds=self.world_catalog())
+                return dict(authenticated=True,profile=self.session_profile(s),catalog=CATALOG,worlds=self.world_catalog())
             if route=="/inventory/assign":return self.inventory_assign(s,body.get("slot"),str(body.get("item","")))
             if route=="/inventory/switch":return self.inventory_switch(s,body.get("slot"))
             if route=="/arena/world":
@@ -316,14 +341,14 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 if 'world_id' in body and (type(chosen) is not int or not 0<=chosen<len(self.worlds)):raise ValueError('Unknown server.')
                 if chosen is not None and self.worlds[chosen].get('mode_id'):return self.join_mode(s,self.worlds[chosen]['mode_id'])
                 pid=self.join(s,chosen,change_world=True);actual=self.fighters[pid]['world_id']
-                result=dict(player=pid,profile=self.profile(user),world=self.world_info(actual),worlds=self.world_catalog())
+                result=dict(player=pid,profile=self.session_profile(s),world=self.world_info(actual),worlds=self.world_catalog())
                 if chosen is not None and actual!=chosen:
                     result['message']=f'Server {chosen+1} is full. Joined server {actual+1} with an available place.'
                 return result
             if route == "/me":
-                return dict(profile=self.profile(user), catalog=CATALOG)
+                return dict(profile=self.session_profile(s), catalog=CATALOG)
             if route == "/leaderboards":
-                return dict(leaderboards=self.leaderboards(),profile=self.profile(user))
+                return dict(leaderboards=self.leaderboards(),profile=self.session_profile(s))
             if route in ("/shop/buy", "/shop/equip"):
                 item_id = str(body.get("item", ""))
                 if item_id not in ITEMS or ITEMS[item_id].get("hidden"):
@@ -337,7 +362,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                     fighter=self.fighters.get(s["fighter"])
                     if fighter:fighter.update(coins=user["coins"],grip_upgrades=user["grip_upgrades"])
                     if not s["guest"]:self.save()
-                    return dict(profile=self.profile(user),message="Grip improved: disarm risk halved again.")
+                    return dict(profile=self.session_profile(s),message="Grip improved: disarm risk halved again.")
                 if item_id=="stability":
                     if route!="/shop/buy":raise ValueError("Footing upgrades are purchased.")
                     price=stability_price(user["stability_upgrades"])
@@ -346,7 +371,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                     fighter=self.fighters.get(s["fighter"])
                     if fighter:fighter.update(coins=user["coins"],stability_upgrades=user["stability_upgrades"])
                     if not s["guest"]:self.save()
-                    return dict(profile=self.profile(user),message="Footing improved: significantly lower knockdown risk.")
+                    return dict(profile=self.session_profile(s),message="Footing improved: significantly lower knockdown risk.")
                 if item_id=="health":
                     if route!="/shop/buy":raise ValueError("Health upgrades are purchased, not equipped.")
                     price=health_price(user["health_upgrades"])
@@ -358,7 +383,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                         fighter["max_hp"]=100+20*user["health_upgrades"]
                         if fighter["dead"]<=0:fighter["hp"]=min(fighter["max_hp"],fighter["hp"]+20)
                     if not s["guest"]:self.save()
-                    return dict(profile=self.profile(user),message="Maximum health increased by 20.")
+                    return dict(profile=self.session_profile(s),message="Maximum health increased by 20.")
                 if route == "/shop/buy" and item_id not in user["inventory"]:
                     if user["coins"] < item["price"]:
                         raise ValueError("Not enough crowns. Earn crowns in the arena.")
@@ -376,11 +401,12 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                     if kind=="weapon":fighter["loadout_weapon"]=item_id
                 if not s["guest"]:
                     self.save()
-                return dict(profile=self.profile(user))
+                return dict(profile=self.session_profile(s))
             if route == "/arena/join":
                 pid=self.join(s)
-                return dict(player=pid,profile=self.profile(user),world=self.world_info(self.fighters[pid]['world_id']),worlds=self.world_catalog())
+                return dict(player=pid,profile=self.session_profile(s),world=self.world_info(self.fighters[pid]['world_id']),worlds=self.world_catalog())
             if route == "/arena/leave":
+                self.realm_checkpoint(self.fighters.get(s['fighter']));self.flush_realms()
                 self.fighters.pop(s["fighter"], None)
                 s["fighter"] = ""
                 self.maintain_bots()
@@ -413,18 +439,24 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                     except (TypeError,ValueError):raise ValueError("Invalid aim.")
                     f["input"]["aim_pitch"]=clamp(pitch,-.8,.8)
                     f["last_input"] = self.clock
+                    if self.is_realm(f):
+                        f['input'].update(build_mode=bool(body.get('build_mode')),mine=bool(body.get('mine')),place=bool(body.get('place')),
+                            build_material=body.get('build_material') if body.get('build_material') in ('wood','stone','dirt','glass','iron') else 'wood',
+                            build_shape=body.get('build_shape') if body.get('build_shape') in ('cube','slab','ramp','pillar','beam') else 'cube',
+                            build_rotation=body.get('build_rotation') if type(body.get('build_rotation')) is int and 0<=body['build_rotation']<4 else 0)
+                        if f['input']['build_mode']:f['input'].update(attack='',block=False,cast=False)
                 public = []
                 room=f["world_id"] if f else self.default_world
                 for a in self.fighters.values():
                     if a["world_id"]!=room:continue
                     public.append({k:public_integer(a[k]) if k in ("xp","skill","coins","kills","deaths","level") else a[k] for k in ("id","name","bot","depth","x","z","yaw","hp","max_hp","stamina","weapon","shield","armour","helmet","spell","kills","deaths","block","jump","dodge","dead","attack","attack_id","windup","spawn_safe","level","xp","skill","coins","disarmed","spell_cd","ward","slow","cooldown","world_id","body_yaw","move_x","move_z","gait","guard_dir","attack_started","attack_windup","attack_duration","aim_zone","balance","fall","fall_duration")})
-                    public[-1].update(team=a.get('team',-1),downed=a.get('downed',0.),eliminated=bool(a.get('eliminated',False)),revive_progress=a.get('revive_progress',0.),match_score=a.get('match_score',0),match_xp=a.get('match_xp',0),match_coins=a.get('match_coins',0),regen_rate=a['regen_rate'],guard_changed=a['guard_changed'],guard_from=a['guard_from'])
+                    public[-1].update(y=a.get('y',0.),mob_kind=a.get('mob_kind',''),build_mode=a.get('build_mode',False),mine_progress=a.get('mine_progress',0.),mining_started=a.get('mining_started',0.),team=a.get('team',-1),downed=a.get('downed',0.),eliminated=bool(a.get('eliminated',False)),revive_progress=a.get('revive_progress',0.),match_score=a.get('match_score',0),match_xp=a.get('match_xp',0),match_coins=a.get('match_coins',0),regen_rate=a['regen_rate'],guard_changed=a['guard_changed'],guard_from=a['guard_from'])
                 return dict(player=s["fighter"], time=self.clock, fighters=public, events=[e for e in self.events if e.get("world_id",room)==room][-12:],
                             pickup=self.pickup_hint(f) if f else {},revive=self.revive_hint(f),match=self.match_state(room),
                             hitboxes=[hb.debug_actor(a,self.clock) for a in self.fighters.values() if a['world_id']==room and a['dead']<=0 and (not f or math.hypot(a['x']-f['x'],a['z']-f['z'])<14)] if body.get('debug_hitboxes') else [],
-                            profile=self.profile(user),humans=sum(not a["bot"] for a in public),bots=sum(a["bot"] for a in public),
+                            profile=self.session_profile(s),humans=sum(not a["bot"] for a in public),bots=sum(a["bot"] for a in public),
                             drops=[d for d in self.drops if d["world_id"]==room],projectiles=[{k:v for k,v in p.items() if not k.startswith('_')} for p in self.projectiles if p["world_id"]==room],
-                            ropes=[r for r in self.ropes if r["world_id"]==room],world=self.world_info(room))
+                            ropes=[r for r in self.ropes if r["world_id"]==room],world=self.world_info(room),survival=self.realm_snapshot(f))
             raise ValueError("Unknown endpoint.")
 
     def send_reset(self, email, code):
@@ -448,8 +480,10 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
             now = time.monotonic()
             for token,s in list(self.sessions.items()):
                 if now-s["touched"] > 60:
+                    self.realm_checkpoint(self.fighters.get(s['fighter']))
                     self.fighters.pop(s["fighter"],None)
                     del self.sessions[token]
+            self.tick_realms()
             self.maintain_bots()
             self._planning_slots={f['id'] for f in sorted((a for a in self.fighters.values() if a['bot']),key=lambda a:a['plan_at'])[:12]} if len(self.fighters)>40 else None
             self.prepare_bot_frame()
@@ -464,9 +498,12 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                         f.update(x=math.sin(angle)*18,z=math.cos(angle)*18,hp=f["max_hp"],stamina=100.,cooldown=0.,windup=0.,attack="",block=False,spawn_safe=1.5,
                                  weapon=f["loadout_weapon"],disarmed=0.,ward=0.,slow=0.,burn=0.,last_attack=False,fall=0.,balance=100.,queued_attack="",last_hurt=self.clock,regen_rate=0.)
                         if self.match_for(f):self.place_squad(f)
+                        if self.is_realm(f):
+                            r=self.realm_for(f);f['y']=__import__('voxel_world').floor_at(r['record'],f['x'],f['z'],30);f['vy']=0.
                     continue
                 if f["bot"]: inp = self.bot_input(f)
                 else: inp = f["input"] if self.clock-f["last_input"] < .5 else {}
+                if self.is_realm(f) and not f.get('realm_grounded',True):inp=dict(inp,jump=False)
                 f['mode_input']=inp
                 match=self.match_for(f)
                 if match and match['phase']!='playing' or f.get('downed',0)>0:
@@ -520,6 +557,7 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 speed = 4.4*(.62 if f["block"] else 1.)*(2.5 if f["dodge"]>0 else 1.)
                 speed*=ITEMS.get(f["armour"],{}).get("slow",1.)*ITEMS.get(f["shield"],{}).get("slow",1.)
                 if f["slow"]>0:speed*=.60
+                old_x,old_z=f['x'],f['z']
                 f["x"] += move[0]/length*speed*dt
                 f["z"] += move[1]/length*speed*dt
                 f["move_x"]=move[0]/length*speed;f["move_z"]=move[1]/length*speed
@@ -527,8 +565,9 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                 desired_yaw=f["yaw"] if f["block"] or f["attack"] else math.atan2(move[0],move[1]) if math.hypot(*move)>.1 else f["body_yaw"]
                 f["body_yaw"]+=wrap(desired_yaw-f["body_yaw"])*min(1.,dt*12)
                 self.collision_props(f)
+                self.realm_move(f,old_x,old_z,dt)
                 radius = math.hypot(f["x"],f["z"])
-                if radius > 38:
+                if radius > 38 and not self.is_realm(f):
                     f["x"] *= 38/radius
                     f["z"] *= 38/radius
                 f["stamina"] = min(100.,f["stamina"]+dt*(8 if f["block"] else 18))
@@ -564,6 +603,9 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                     f['queued_repeat']=False
                     self.learning_attack(f)
                 f["last_attack"] = bool(pressed)
+                if self.is_realm(f):
+                    if inp.get('build_mode') and (f['attack'] or f['queued_attack']):self.cancel_attack(f,.12)
+                    self.realm_build_tick(f,inp,dt)
                 if f["windup"] > 0:
                     f["windup"] = max(0.,f["attack_started"]+f["attack_windup"]-self.clock)
                     if f["windup"] <= 0 and (ranged or ITEMS[f['weapon']]['family']=='rope'):pending.append(('strike',f))
@@ -583,10 +625,12 @@ class Arena(GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
                     for b in fighters[i+1:]:
                         dx,dz = b["x"]-a["x"],b["z"]-a["z"]
                         dist = math.hypot(dx,dz)
-                        if .001 < dist < .78:
+                        if .001 < dist < .78 and abs(a.get('y',0)-b.get('y',0))<1.9:
                             push = (.78-dist)*.5
+                            old_a=(a['x'],a['z']);old_b=(b['x'],b['z'])
                             a["x"] -= dx/dist*push; a["z"] -= dz/dist*push
                             b["x"] += dx/dist*push; b["z"] += dz/dist*push
+                            if self.is_realm(a):self.realm_move(a,*old_a,0);self.realm_move(b,*old_b,0)
             self.learning_tick()
             self.tick_modes(dt)
             for f in self.fighters.values():self.regenerate_health(f,dt)

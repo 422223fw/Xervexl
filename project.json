@@ -1,41 +1,106 @@
 {
   "name": "Xervexl",
   "company": "motlon",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "type": "native_windows_sword_arena",
-  "renderers": ["OpenGL", "Vulkan"],
+  "renderers": [
+    "OpenGL",
+    "Vulkan"
+  ],
   "default_server": "http://127.0.0.1:8765",
   "minimum_combatants": 10,
   "max_players_per_server_instance": 100,
   "automatic_server_instances": "new_isolated_room_on_capacity_in_shared_backend_process",
-  "bot_search_depths": [2, 3, 4, 5],
+  "bot_search_depths": [
+    2,
+    3,
+    4,
+    5
+  ],
   "bot_learning": "persistent_online_contextual_action_values_from_server_combat_outcomes",
   "default_combat_controls": "movement_directed_held_attacks_with_optional_manual_guard_mode",
   "combat_animation": "quintic_contact_arcs_with_matched_velocity_and_acceleration_supported_steps_and_free_hand_counter_swing",
   "motion_interpolation": "bounded_90ms_gait_jump_fall_and_camera_prediction_with_smoothed_starts_and_stops",
-  "combat_rules": {"block_cancel_preserves_recovery": true, "offence_during_dodge": false, "successful_attack_or_spell_ends_spawn_protection": true, "action_phase_hud": true},
+  "combat_rules": {
+    "block_cancel_preserves_recovery": true,
+    "offence_during_dodge": false,
+    "successful_attack_or_spell_ends_spawn_protection": true,
+    "action_phase_hud": true
+  },
   "world_visuals": "biome_lighting_and_haze_layered_ridges_wind_swept_canopies_stone_courses_and_nearby_ground_cover",
   "hit_detection": "server_swept_weapon_segments_against_oriented_body_boxes_and_animated_limb_capsules",
   "guard": "manual_direction_and_physical_blade_contact_with_120ms_shared_animation",
   "hitbox_debug_key": "F3",
-  "progression": ["xp", "rank", "skill", "crowns"],
-  "health_recovery": {"kill_refill": "full_maximum_health_and_stamina", "automatic_regen_hp_per_second": 2, "regen_delay_after_damage_seconds": 4},
+  "progression": [
+    "xp",
+    "rank",
+    "skill",
+    "crowns"
+  ],
+  "health_recovery": {
+    "kill_refill": "full_maximum_health_and_stamina",
+    "automatic_regen_hp_per_second": 2,
+    "regen_delay_after_damage_seconds": 4
+  },
   "shop_items": 47,
-  "grip_upgrade": {"first_price": 4000, "price_rule": "4000_times_next_upgrade_squared", "disarm_risk_multiplier_per_upgrade": 0.5},
+  "grip_upgrade": {
+    "first_price": 4000,
+    "price_rule": "4000_times_next_upgrade_squared",
+    "disarm_risk_multiplier_per_upgrade": 0.5
+  },
   "biomes": 8,
   "initial_server_instances": 8,
   "official_round_modes": 8,
-  "squad_survival": {"combatants": 100, "team_size": 4, "revive_seconds": 3, "bleedout_seconds": 24, "winner_reward": {"xp": 650, "coins": 350, "skill": 25}},
+  "squad_survival": {
+    "combatants": 100,
+    "team_size": 4,
+    "revive_seconds": 3,
+    "bleedout_seconds": 24,
+    "winner_reward": {
+      "xp": 650,
+      "coins": 350,
+      "skill": 25
+    }
+  },
   "world_workshop": "object_editor_and_validated_event_script_programming_with_match_only_custom_rewards",
   "music": "original_stereo_menu_and_combat_scores_with_saved_volume_and_mute",
   "weapon_quick_slots": 5,
-  "starting_stats": {"rank": 1, "xp": 0, "skill": 0, "coins": 100},
+  "starting_stats": {
+    "rank": 1,
+    "xp": 0,
+    "skill": 0,
+    "coins": 100
+  },
   "account_required": true,
   "remember_login": "until_logout_with_windows_user_encrypted_client_token_and_hashed_server_grants",
   "rank_xp_rule": "rank_2_cost_79_then_multiply_previous_cost_by_next_rank",
-  "graphics_mode": "single_executable_with_runtime_switching_and_auto_fallback",
+  "graphics_mode": "Oreon_OpenGL_scene_with_OpenGL_or_native_Vulkan_presentation",
   "account_storage": "data/accounts.json",
   "account_storage_private": true,
   "public_hosting_configured": false,
-  "smtp_configured": false
+  "smtp_configured": false,
+  "license": "GPL-3.0-only",
+  "scene_engine": "Oreon core / GL scene graph via JNI",
+  "default_presentation": "OpenGL",
+  "friends": "registered_accounts_explicit_request_acceptance",
+  "survival_worlds": {
+    "persistent": true,
+    "private_to_owner_and_confirmed_friends": true,
+    "crafting": true,
+    "mining": true,
+    "building_shapes": [
+      "cube",
+      "slab",
+      "ramp",
+      "pillar",
+      "beam"
+    ],
+    "settings": [
+      "mobs",
+      "bots",
+      "pvp",
+      "friends_build"
+    ],
+    "arena_progress_isolated": true
+  }
 }

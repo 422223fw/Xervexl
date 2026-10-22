@@ -27,6 +27,7 @@ class Combat:
         self.events=self.events[-80:]
 
     def sync_progress(self,f):
+        if self.is_realm(f):return
         match=self.match_for(f)
         if match and not match['mode']['ranked']:return
         for s in self.sessions.values():
@@ -51,6 +52,7 @@ class Combat:
             rows["user:"+u["username"].lower()]=dict(username=u["username"],bot=False,level=level_for_xp(u["xp"]),
                     **{k:u[k] for k in ("xp","skill","coins","kills")})
         for f in self.fighters.values():
+            if self.is_realm(f):continue
             match=self.match_for(f)
             if match and not match['mode']['ranked']:continue
             key=f["id"] if f["bot"] or f["name"].startswith("Guest-") else "user:"+f["name"].lower()
@@ -60,7 +62,7 @@ class Combat:
 
     def lift(self,f):
         remaining=f["jump"]
-        return math.sin((.55-remaining)/.55*math.pi)*.65 if remaining>0 else 0.
+        return f.get('y',0.)+(math.sin((.55-remaining)/.55*math.pi)*.65 if remaining>0 else 0.)
 
     def regenerate_health(self,f,dt):
         """Recover only the elapsed unhurt part of this tick; never revive."""
@@ -103,7 +105,7 @@ class Combat:
         yaw=f["yaw"]+.8
         self.drops.append(dict(id="drop-"+secrets.token_hex(4),weapon=item,owner=f["id"],
             world_id=f["world_id"],
-            x=f["x"],y=1.25,z=f["z"],vx=math.sin(yaw)*2.5,vz=math.cos(yaw)*2.5,vy=3.2,age=0.,expires=self.clock+25))
+            x=f["x"],y=f.get('y',0)+1.25,z=f["z"],vx=math.sin(yaw)*2.5,vz=math.cos(yaw)*2.5,vy=3.2,age=0.,expires=self.clock+25))
         self.emit("disarm" if disarmer else "drop",source=disarmer["id"] if disarmer else f["id"],target=f["id"],weapon=item)
         if disarmer:
             self.grant(disarmer,xp=25+10*f["level"],skill=max(1,f["level"]//2),disarms=1)
@@ -114,7 +116,7 @@ class Combat:
 
     def pickup_candidate(self,f):
         if f['dead']>0 or f.get('downed',0)>0:return None
-        nearby=[d for d in self.drops if d['world_id']==f['world_id'] and d['age']>=.45 and d['y']<=.22
+        nearby=[d for d in self.drops if d['world_id']==f['world_id'] and d['age']>=.45 and abs(d['y']-self.drop_floor(d))<=.16 and abs(d['y']-f.get('y',0))<.8
                 and d['expires']>self.clock and math.hypot(d['x']-f['x'],d['z']-f['z'])<1.7]
         # Recover your dropped blade first when several weapons lie at your feet.
         return min(nearby,key=lambda d:(d['owner']!=f['id'],math.hypot(d['x']-f['x'],d['z']-f['z']))) if nearby else None
@@ -174,6 +176,10 @@ class Combat:
         victim.update(hp=0.,dead=3.5,windup=0.,attack='',queued_attack='');victim['deaths']+=1
         self.mode_eliminated(victim,attacker)
         if attacker:
+            if self.is_realm(attacker) and victim['bot'] and self.realm_player(attacker) is not None:
+                state=self.realm_player(attacker);loot={'fiber':2,'wood':1,'crystal':1 if victim.get('mob_kind')=='golem' else 0}
+                for resource,count in loot.items():state['resources'][resource]=state['resources'].get(resource,0)+count
+                self.realm_checkpoint(attacker)
             attacker['kills']+=1
             reward=kill_reward(victim["level"])
             penalty=death_penalty(victim["level"],attacker["level"])
@@ -221,6 +227,10 @@ class Combat:
         for index in range(steps+1):
             age=start+(end-start)*index/steps
             a,b=hb.weapon_segment(attacker,self.clock,age)
+            if self.realm_trace(attacker['world_id'],(attacker['x'],self.lift(attacker)+1.4,attacker['z']),a):continue
+            wall=self.realm_trace(attacker['world_id'],a,b)
+            if wall:
+                b=hb.add(a,hb.mul(hb.norm(hb.sub(b,a)),max(0,wall['distance']-.02)))
             for victim in nearby:
                 if victim['id'] in resolved or victim['dead']>0:continue
                 shapes,shield=self.hit_shapes(victim);body=hb.body_hit(a,b,shapes)
@@ -296,9 +306,10 @@ class Combat:
         self._hitbox_cache={}
         for drop in self.drops:
             drop["age"]+=dt
-            if drop["y"]>.06 or drop["vy"]>0:
+            floor=self.drop_floor(drop)
+            if drop["y"]>floor or drop["vy"]>0:
                 drop["x"]+=drop["vx"]*dt;drop["z"]+=drop["vz"]*dt;drop["y"]+=drop["vy"]*dt;drop["vy"]-=9.8*dt
-                if drop["y"]<.06:drop["y"]=.06;drop["vy"]=0;drop["vx"]=drop["vz"]=0
+                if drop["y"]<floor:drop["y"]=floor;drop["vy"]=0;drop["vx"]=drop["vz"]=0
         self.drops=[d for d in self.drops if self.clock<d["expires"]]
         alive=[]
         for p in self.projectiles:
@@ -313,6 +324,8 @@ class Combat:
                 continue
             consumed=False;candidates=[]
             end=(p['x'],p['y'],p['z'])
+            wall=self.realm_trace(p['world_id'],old,end)
+            wall_t=wall['distance']/max(.0001,math.sqrt(hb.dot(hb.sub(end,old),hb.sub(end,old)))) if wall else 2.
             for victim in self.fighters.values():
                 if victim["dead"]>0 or victim["spawn_safe"]>0 or victim["dodge"]>0 or not self.can_fight(attacker,victim):continue
                 shapes,shield=self.hit_shapes(victim);body=hb.body_hit(old,end,shapes,.025)
@@ -324,7 +337,7 @@ class Combat:
                     guard_hit=hb.segment_capsule(old,end,c,d,.15)
                 shield_hit=hb.shape_hit(old,end,shield,.025) if shield and facing else None
                 contact=min((t for t in (body[0] if body else None,guard_hit,shield_hit) if t is not None),default=None)
-                if contact is not None:candidates.append((contact,victim,body,guard_hit,shield_hit))
+                if contact is not None and contact<wall_t:candidates.append((contact,victim,body,guard_hit,shield_hit))
             for _,victim,body,guard_hit,shield_hit in sorted(candidates,key=lambda c:c[0]):
                 t=guard_hit if guard_hit is not None and (not body or guard_hit<=body[0]) else body[0] if body else shield_hit
                 cx,cy,cz=hb.add(old,hb.mul(hb.sub(end,old),t))
@@ -345,6 +358,7 @@ class Combat:
                     length=max(.001,math.sqrt(dx*dx+dy*dy+dz*dz))
                     p.update(owner=victim["id"],vx=dx/length*speed,vz=dz/length*speed,vy=dy/length*speed,gravity=0.,x=cx+dx/length*.6,y=cy+dy/length*.6,z=cz+dz/length*.6,bounces=p["bounces"]+1,origin_x=cx,origin_y=cy,origin_z=cz)
                     self.emit("deflect",source=victim["id"],target=attacker["id"])
+                    wall=None
                     break
                 if guard_hit is not None and (not body or guard_hit<=body[0]) and blade and facing and aligned and victim['block']:
                     self.learning_reward(p.get('_learning'),-2,True);self.learning.finish(p.get('_learning'))
@@ -356,5 +370,6 @@ class Combat:
                 self.damage(attacker,victim,base,body[1] if body else 'arms',kind="projectile_hit",magic=p["magic"],learning_ticket=p.get('_learning'),point=(cx,cy,cz))
                 self.learning.finish(p.get('_learning'),miss=True)
                 consumed=True;break
-            if not consumed:alive.append(p)
+            if not consumed and not wall:alive.append(p)
+            elif wall and not consumed:self.learning.finish(p.get('_learning'),miss=True)
         self.projectiles=alive

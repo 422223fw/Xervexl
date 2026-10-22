@@ -54,7 +54,7 @@ class ArenaFeatures:
         humans=self.populations();bots=Counter(f['world_id'] for f in self.fighters.values() if f['bot'])
         # Listing metadata stays small; geometry is sent only for the joined room.
         return [dict({k:v for k,v in w.items() if k!='props'},humans=humans[w['id']],bots=bots[w['id']],
-                     full=humans[w['id']]>=w.get('capacity',SERVER_CAPACITY) or self.matches.get(w['id'],{}).get('phase') in ('playing','finished'),available=max(0,w.get('capacity',SERVER_CAPACITY)-humans[w['id']])) for w in self.worlds]
+                     full=humans[w['id']]>=w.get('capacity',SERVER_CAPACITY) or self.matches.get(w['id'],{}).get('phase') in ('playing','finished'),available=max(0,w.get('capacity',SERVER_CAPACITY)-humans[w['id']])) for w in self.worlds if not w.get('realm_id')]
 
     def create_world(self,source_id):
         source=self.worlds[source_id];template=source['template_id']
@@ -66,11 +66,11 @@ class ArenaFeatures:
         return world['id']
 
     def ensure_spare(self,world_id):
-        if self.worlds[world_id].get('mode_id'):return
+        if self.worlds[world_id].get('mode_id') or self.worlds[world_id].get('realm_id'):return
         counts=self.populations()
         if counts[world_id]<SERVER_CAPACITY:return
         template=self.worlds[world_id]['template_id']
-        if not any(not w.get('mode_id') and w['template_id']==template and counts[w['id']]<SERVER_CAPACITY for w in self.worlds):
+        if not any(not w.get('mode_id') and not w.get('realm_id') and w['template_id']==template and counts[w['id']]<SERVER_CAPACITY for w in self.worlds):
             self.create_world(world_id)
 
     def available_world(self,requested,ignore=()):
@@ -78,12 +78,12 @@ class ArenaFeatures:
         counts=self.populations(ignore)
         if counts[requested]<SERVER_CAPACITY:return requested
         template=self.worlds[requested]['template_id']
-        candidates=[w['id'] for w in self.worlds if not w.get('mode_id') and w['template_id']==template and counts[w['id']]<SERVER_CAPACITY]
+        candidates=[w['id'] for w in self.worlds if not w.get('mode_id') and not w.get('realm_id') and w['template_id']==template and counts[w['id']]<SERVER_CAPACITY]
         return max(candidates,key=lambda w:(counts[w],-w)) if candidates else self.create_world(requested)
 
     def choose_world(self,exclude=None,ignore=()):
         counts=self.populations(ignore)
-        available=[w['id'] for w in self.worlds if not w.get('mode_id') and w['id']!=exclude and counts[w['id']]<SERVER_CAPACITY]
+        available=[w['id'] for w in self.worlds if not w.get('mode_id') and not w.get('realm_id') and w['id']!=exclude and counts[w['id']]<SERVER_CAPACITY]
         if not available:return self.create_world(exclude if exclude is not None else self.default_world)
         if exclude is None:
             populated=[w for w in available if counts[w]>0]

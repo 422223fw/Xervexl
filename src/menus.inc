@@ -1,4 +1,4 @@
-    json item_info(const std::string& id){for(const auto& item:catalog)if(item.value("id",std::string{})==id)return item;return json::object();}
+    json item_info(const std::string& id){for(const auto& item:catalog)if(item.value("id",std::string{})==id)return item;if(id=="pickaxe")return {{"id",id},{"name","Stone pickaxe"},{"family","axe"}};if(id=="fists")return {{"id",id},{"name","Bare hands"},{"family","unarmed"}};return json::object();}
     void weapon_icon(float x,float y,const std::string& id,float scale=1){
         auto item=item_info(id);std::string family=item.value("family",std::string{}),kind=item.value("kind",std::string("weapon"));
         Colour metal{.75f,.78f,.75f};bool magic=item.contains("magic")||kind=="spell";
@@ -61,6 +61,7 @@
         json slots=profile.value("weapon_slots",json::array({"knife","","","",""}));
         for(int i=0;i<5;i++){float x=47+i*241;std::string id=i<static_cast<int>(slots.size())?slots[i].get<std::string>():"";if(button(x,110,225,48,"SLOT "+std::to_string(i+1),inventorySlot==i))inventorySlot=i;canvas.text(x+14,173,id.empty()?"EMPTY":item_info(id).value("name",id),1.45f,id==heldWeapon?GOLD:MUTED);}
         std::vector<json> owned;for(const auto& item:catalog)if(item.value("kind",std::string("weapon"))=="weapon"&&profile.contains("inventory")){for(const auto& id:profile["inventory"])if(id==item["id"]){owned.push_back(item);break;}}
+        if(survival()&&profile.contains("inventory"))for(const auto& id:profile["inventory"])if(id=="pickaxe"||id=="fists")owned.push_back(item_info(id));
         int pages=std::max(1,(static_cast<int>(owned.size())+7)/8);inventoryPage=std::min(inventoryPage,pages-1);
         if(owned.empty())canvas.text(47,240,"SIGN UP OR SIGN IN. START WITH A KNIFE; PURCHASE MORE IN THE ARMOURY.",1.5f,WHITE);
         for(int i=0;i<8;i++){int index=inventoryPage*8+i;if(index>=static_cast<int>(owned.size()))break;float x=47+(i%4)*301,y=218+(i/4)*217;std::string id=owned[index]["id"];

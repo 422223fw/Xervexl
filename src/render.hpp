@@ -18,6 +18,7 @@ struct Renderer {
     std::vector<unsigned char> pixels;
     virtual ~Renderer() = default;
     virtual void draw(const std::vector<Vertex>& vertices, int width, int height) = 0;
+    virtual void draw_pixels(const std::vector<unsigned char>&,int,int)=0;
     virtual const char* name() const = 0;
 };
 
@@ -36,6 +37,12 @@ struct OpenGLRenderer : Renderer {
     }
     ~OpenGLRenderer() {wglMakeCurrent(nullptr,nullptr);if(context)wglDeleteContext(context);ReleaseDC(window,dc);}
     const char* name() const override {return "OPENGL";}
+    void draw_pixels(const std::vector<unsigned char>& rgba,int w,int h) override {
+        wglMakeCurrent(dc,context);glViewport(0,0,w,h);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);
+        glMatrixMode(GL_PROJECTION);glLoadIdentity();glOrtho(0,w,h,0,-1,1);glMatrixMode(GL_MODELVIEW);glLoadIdentity();
+        glRasterPos2i(0,0);glPixelZoom(1,-1);glDrawPixels(w,h,GL_RGBA,GL_UNSIGNED_BYTE,rgba.data());glPixelZoom(1,1);
+        if(captureRequested)pixels=rgba;captureRequested=false;SwapBuffers(dc);
+    }
     void draw(const std::vector<Vertex>& v,int w,int h) override {
         glViewport(0,0,w,h);glClearColor(.06f,.07f,.07f,1);glClear(GL_COLOR_BUFFER_BIT);
         glMatrixMode(GL_PROJECTION);glLoadIdentity();glOrtho(0,1,1,0,-1,1);
@@ -65,7 +72,7 @@ X(vkCreateGraphicsPipelines) X(vkDestroyPipeline) X(vkCreateBuffer) X(vkDestroyB
 X(vkGetBufferMemoryRequirements) X(vkAllocateMemory) X(vkFreeMemory) X(vkBindBufferMemory) X(vkMapMemory) X(vkUnmapMemory) \
 X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkAllocateCommandBuffers) X(vkResetCommandBuffer) \
 X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) \
-X(vkCmdBindPipeline) X(vkCmdBindVertexBuffers) X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdDraw) X(vkCmdPipelineBarrier) X(vkCmdCopyImageToBuffer) \
+X(vkCmdBindPipeline) X(vkCmdBindVertexBuffers) X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdDraw) X(vkCmdPipelineBarrier) X(vkCmdCopyImageToBuffer) X(vkCmdCopyBufferToImage) \
 X(vkCreateSemaphore) X(vkDestroySemaphore) X(vkQueueSubmit)
 
 struct VulkanRenderer : Renderer {
@@ -78,6 +85,7 @@ struct VulkanRenderer : Renderer {
     std::vector<VkImageView> views;std::vector<VkFramebuffer> frames;
     std::vector<VkImage> images;
     VkBuffer readBuffer{};VkDeviceMemory readMemory{};void* readMapped{};
+    VkBuffer uploadBuffer{};VkDeviceMemory uploadMemory{};void* uploadMapped{};
     VkRenderPass pass{};VkPipelineLayout layout{};VkPipeline pipeline{};
     VkBuffer buffer{};VkDeviceMemory memory{};void* mapped{};size_t capacity=sizeof(Vertex)*2000000;
     VkCommandPool pool{};VkCommandBuffer command{};VkSemaphore acquired{},complete{};
@@ -133,6 +141,9 @@ struct VulkanRenderer : Renderer {
     }
     void clear_swapchain(){
         if(!device)return;vkDeviceWaitIdle(device);
+        if(uploadMapped)vkUnmapMemory(device,uploadMemory);uploadMapped=nullptr;
+        if(uploadBuffer)vkDestroyBuffer(device,uploadBuffer,nullptr);uploadBuffer={};
+        if(uploadMemory)vkFreeMemory(device,uploadMemory,nullptr);uploadMemory={};
         if(readMapped)vkUnmapMemory(device,readMemory);readMapped=nullptr;
         if(readBuffer)vkDestroyBuffer(device,readBuffer,nullptr);readBuffer={};
         if(readMemory)vkFreeMemory(device,readMemory,nullptr);readMemory={};images.clear();
@@ -153,10 +164,18 @@ struct VulkanRenderer : Renderer {
         uint32_t images=caps.minImageCount+1;if(caps.maxImageCount&&images>caps.maxImageCount)images=caps.maxImageCount;
         VkSwapchainCreateInfoKHR sc{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};sc.surface=surface;sc.minImageCount=images;sc.imageFormat=format;sc.imageColorSpace=chosen.colorSpace;sc.imageExtent=extent;sc.imageArrayLayers=1;sc.imageUsage=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         if(caps.supportedUsageFlags&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)sc.imageUsage|=VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        if(!(caps.supportedUsageFlags&VK_IMAGE_USAGE_TRANSFER_DST_BIT))throw std::runtime_error("Vulkan surface cannot receive Oreon frames");
+        sc.imageUsage|=VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         sc.imageSharingMode=VK_SHARING_MODE_EXCLUSIVE;sc.preTransform=caps.currentTransform;sc.compositeAlpha=VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;sc.presentMode=VK_PRESENT_MODE_FIFO_KHR;sc.clipped=VK_TRUE;
         check(vkCreateSwapchainKHR(device,&sc,nullptr,&swapchain),"Swapchain");
         uint32_t imageCount=0;vkGetSwapchainImagesKHR(device,swapchain,&imageCount,nullptr);std::vector<VkImage> swapImages(imageCount);check(vkGetSwapchainImagesKHR(device,swapchain,&imageCount,swapImages.data()),"Swapchain images");
         this->images=swapImages;
+        {
+            VkBufferCreateInfo bc{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bc.size=static_cast<VkDeviceSize>(extent.width)*extent.height*4;bc.usage=VK_BUFFER_USAGE_TRANSFER_SRC_BIT;bc.sharingMode=VK_SHARING_MODE_EXCLUSIVE;check(vkCreateBuffer(device,&bc,nullptr,&uploadBuffer),"Oreon upload buffer");
+            VkMemoryRequirements req{};vkGetBufferMemoryRequirements(device,uploadBuffer,&req);VkPhysicalDeviceMemoryProperties props{};vkGetPhysicalDeviceMemoryProperties(physical,&props);uint32_t type=UINT32_MAX;
+            for(uint32_t i=0;i<props.memoryTypeCount;i++)if((req.memoryTypeBits&(1<<i))&&((props.memoryTypes[i].propertyFlags&6)==6)){type=i;break;}
+            if(type==UINT32_MAX)throw std::runtime_error("No coherent Oreon upload memory");VkMemoryAllocateInfo ma{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ma.allocationSize=req.size;ma.memoryTypeIndex=type;check(vkAllocateMemory(device,&ma,nullptr,&uploadMemory),"Oreon upload memory");check(vkBindBufferMemory(device,uploadBuffer,uploadMemory,0),"Bind Oreon upload");check(vkMapMemory(device,uploadMemory,0,bc.size,0,&uploadMapped),"Map Oreon upload");
+        }
         if(sc.imageUsage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT){
             VkBufferCreateInfo bc{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bc.size=static_cast<VkDeviceSize>(extent.width)*extent.height*4;bc.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;bc.sharingMode=VK_SHARING_MODE_EXCLUSIVE;check(vkCreateBuffer(device,&bc,nullptr,&readBuffer),"Readback buffer");
             VkMemoryRequirements req{};vkGetBufferMemoryRequirements(device,readBuffer,&req);VkPhysicalDeviceMemoryProperties props{};vkGetPhysicalDeviceMemoryProperties(physical,&props);uint32_t type=UINT32_MAX;
@@ -211,6 +230,23 @@ struct VulkanRenderer : Renderer {
         r=vkQueuePresentKHR(queue,&present);vkQueueWaitIdle(queue);if(r!=VK_ERROR_OUT_OF_DATE_KHR&&r!=VK_SUBOPTIMAL_KHR)check(r,"Present frame");
         if(capture){pixels.resize(static_cast<size_t>(extent.width)*extent.height*4);memcpy(pixels.data(),readMapped,pixels.size());if(format==VK_FORMAT_B8G8R8A8_UNORM||format==VK_FORMAT_B8G8R8A8_SRGB)for(size_t i=0;i<pixels.size();i+=4)std::swap(pixels[i],pixels[i+2]);}
         captureRequested=false;
+    }
+    void draw_pixels(const std::vector<unsigned char>& rgba,int w,int h) override {
+        if(!swapchain||extent.width!=static_cast<uint32_t>(w)||extent.height!=static_cast<uint32_t>(h))resize(w,h);
+        if(extent.width!=static_cast<uint32_t>(w)||extent.height!=static_cast<uint32_t>(h))return;
+        uint32_t index=0;auto r=vkAcquireNextImageKHR(device,swapchain,UINT64_MAX,acquired,VK_NULL_HANDLE,&index);
+        if(r==VK_ERROR_OUT_OF_DATE_KHR){resize(w,h);return;}if(r!=VK_SUBOPTIMAL_KHR)check(r,"Acquire Oreon frame");
+        memcpy(uploadMapped,rgba.data(),rgba.size());
+        if(format==VK_FORMAT_B8G8R8A8_UNORM||format==VK_FORMAT_B8G8R8A8_SRGB){auto p=static_cast<unsigned char*>(uploadMapped);for(size_t i=0;i<rgba.size();i+=4)std::swap(p[i],p[i+2]);}
+        else if(format!=VK_FORMAT_R8G8B8A8_UNORM&&format!=VK_FORMAT_R8G8B8A8_SRGB)throw std::runtime_error("Unsupported Oreon presentation format");
+        check(vkResetCommandBuffer(command,0),"Reset Oreon frame");VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};begin.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;check(vkBeginCommandBuffer(command,&begin),"Begin Oreon frame");
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;b.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;b.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.image=images[index];b.subresourceRange.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;b.subresourceRange.levelCount=1;b.subresourceRange.layerCount=1;
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&b);
+        VkBufferImageCopy copy{};copy.imageSubresource.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;copy.imageSubresource.layerCount=1;copy.imageExtent={extent.width,extent.height,1};vkCmdCopyBufferToImage(command,uploadBuffer,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
+        b.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;b.dstAccessMask=0;b.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;b.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,nullptr,0,nullptr,1,&b);
+        check(vkEndCommandBuffer(command),"End Oreon frame");VkPipelineStageFlags stage=VK_PIPELINE_STAGE_TRANSFER_BIT;VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.waitSemaphoreCount=1;submit.pWaitSemaphores=&acquired;submit.pWaitDstStageMask=&stage;submit.commandBufferCount=1;submit.pCommandBuffers=&command;submit.signalSemaphoreCount=1;submit.pSignalSemaphores=&complete;check(vkQueueSubmit(queue,1,&submit,VK_NULL_HANDLE),"Submit Oreon frame");
+        VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};present.waitSemaphoreCount=1;present.pWaitSemaphores=&complete;present.swapchainCount=1;present.pSwapchains=&swapchain;present.pImageIndices=&index;r=vkQueuePresentKHR(queue,&present);vkQueueWaitIdle(queue);if(r!=VK_ERROR_OUT_OF_DATE_KHR&&r!=VK_SUBOPTIMAL_KHR)check(r,"Present Oreon frame");
+        if(captureRequested)pixels=rgba;captureRequested=false;
     }
     const char* name() const override{return "VULKAN";}
     void cleanup(){

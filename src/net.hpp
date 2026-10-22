@@ -18,6 +18,7 @@ struct Network {
     std::mutex mutex;std::deque<Task> tasks;
     json world=json::object(),profile=json::object(),input=json::object(),catalog=json::array(),boards=json::object(),worlds=json::array();
     json modes=json::array(),blueprint=json::object();std::string savedMode,blueprintId;
+    json social=json::object(),realms=json::array();std::string createdRealm;
     std::string url="http://127.0.0.1:8765",token,error,message,player;
     std::atomic<bool> running{true};bool connected=false,joined=false,busy=false,restoring=false;
     unsigned generation=0;
@@ -30,6 +31,7 @@ struct Network {
     }
     void server(const std::string& address){
         std::lock_guard<std::mutex> guard(mutex);auto oldBase=url,oldToken=token;bool wasJoined=joined;
+        social=json::object();realms=json::array();createdRealm.clear();
         url=LoginStore::address(address);generation++;player.clear();world=json::object();profile=json::object();catalog=json::array();boards=json::object();joined=false;connected=false;tasks.clear();error.clear();message="Server address updated.";
         try{loginStore.select(url);}catch(const std::exception&){message="Server selected. Could not save this setting.";}
         token=loginStore.token(url);restoring=!token.empty();busy=false;
@@ -37,6 +39,7 @@ struct Network {
     }
     void logout(){
         std::lock_guard<std::mutex> guard(mutex);auto previous=token;generation++;tasks.clear();token.clear();profile=json::object();world=json::object();boards=json::object();player.clear();joined=false;restoring=false;error.clear();busy=false;message="Logged out. Your progress is saved.";
+        social=json::object();realms=json::array();createdRealm.clear();
         if(!previous.empty()){
             try{loginStore.logout(url,previous);}catch(const std::exception&){
                 // Remove a stale cache if writing the pending revocation failed.
@@ -106,6 +109,7 @@ struct Network {
                     if(result.contains("error")){
                         error=result["error"].get<std::string>();busy=!tasks.empty();
                         if(result.value("code",std::string{})=="auth_required"&&auth==token){
+                            social=json::object();realms=json::array();createdRealm.clear();
                             try{loginStore.forget(base,auth);}catch(const std::exception&){}
                             token.clear();profile=json::object();player.clear();world=json::object();boards=json::object();joined=false;restoring=false;
                         }
@@ -113,6 +117,7 @@ struct Network {
                     else{
                         if(task.route!="/arena/state"||!connected)error.clear();connected=true;
                         if(result.contains("token")){
+                            social=json::object();realms=json::array();createdRealm.clear();
                             auto fresh=result["token"].get<std::string>();
                             try{if(!auth.empty()&&auth!=fresh)loginStore.logout(base,auth);loginStore.remember(base,fresh);}catch(const std::exception&){message="Signed in. Could not save sign-in on this computer.";}
                             token=fresh;restoring=false;joined=false;player.clear();world=json::object();
@@ -122,6 +127,9 @@ struct Network {
                         if(result.contains("catalog"))catalog=result["catalog"];
                         if(result.contains("worlds"))worlds=result["worlds"];
                         if(result.contains("modes"))modes=result["modes"];
+                        if(result.contains("social"))social=result["social"];
+                        if(result.contains("realms"))realms=result["realms"];
+                        if(result.contains("created_realm"))createdRealm=result["created_realm"].get<std::string>();
                         if(result.contains("saved_mode"))savedMode=result["saved_mode"].get<std::string>();
                         if(result.contains("blueprint")){blueprint=result["blueprint"];blueprintId=result.value("blueprint_id",std::string{});}
                         if(result.contains("leaderboards"))boards=result["leaderboards"];
@@ -131,6 +139,7 @@ struct Network {
                         if(task.route=="/arena/join")joined=true;
                         if(task.route=="/arena/world")joined=true;
                         if(task.route=="/modes/join")joined=true;
+                        if(task.route=="/realms/join"){joined=true;world=json::object();}
                         if(task.route=="/arena/leave")joined=false;
                         if(task.route=="/arena/state"&&joined&&player.empty()){
                             // An inactive/other-device avatar can disappear while sign-in stays valid.

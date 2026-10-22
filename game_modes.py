@@ -87,6 +87,7 @@ class GameModes:
 
     def can_fight(self,a,b):
         if a is b or a['world_id']!=b['world_id'] or a.get('team',-1)>=0 and a.get('team')==b.get('team'):return False
+        if self.is_realm(a) and (a['bot'] and b['bot'] or not a['bot'] and not b['bot'] and not self.realm_for(a)['settings']['pvp']):return False
         match=self.matches.get(a['world_id'])
         return not (a.get('downed',0)>0 or a.get('eliminated') or b.get('eliminated') or match and match['phase']!='playing')
 

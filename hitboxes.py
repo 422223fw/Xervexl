@@ -53,6 +53,8 @@ def pose(f,clock,age=None):
         target=DATA['guards'][f.get('guard_dir','centre')]
         source=f.get('guard_from');elapsed=clock-f.get('guard_changed',-999)
         return blend(source,target,smooth(elapsed/GUARD_TIME)) if source and elapsed<GUARD_TIME else target
+    if f.get('build_mode') and f.get('mine_progress',0)>0:
+        move=DATA['moves']['overhead'];samples=move['aims']['legs'];position=((clock-f.get('mining_started',clock))%.85)/.85*DATA['intervals'];index=min(len(samples)-2,int(position));result=list(mix(samples[index],samples[index+1],position-index));result[3:6]=norm(result[3:6]);return result
     move=DATA['moves'].get(f.get('attack',''))
     if not move:return walking_pose(f)
     age=clock-f.get('attack_started',clock) if age is None else age
@@ -121,7 +123,7 @@ def skeleton(f,clock,age=None):
         if not tilt:return v
         y=v[1];z=dot(v,front)
         return add(add(mul(side,dot(v,side)),(0,y*math.cos(tilt)-z*math.sin(tilt),0)),mul(front,y*math.sin(tilt)+z*math.cos(tilt)))
-    origin=(f['x'],lift+(.08 if tilt else 0),f['z'])
+    origin=(f['x'],f.get('y',0.)+lift+(.08 if tilt else 0),f['z'])
     def world(v):return add(origin,rotate(v))
     return p,basis,right,left,hand,tip,other,world,rotate
 
@@ -193,6 +195,8 @@ def body_hit(a,b,shapes,radius=.055):
     t,zone=min(hits);return t,zone,add(a,mul(sub(b,a),t))
 
 def active_window(f):
+    if f.get('build_mode') and f.get('mine_progress',0)>0:
+        move=DATA['moves']['overhead'];samples=move['aims']['legs'];position=((clock-f.get('mining_started',clock))%.85)/.85*DATA['intervals'];index=min(len(samples)-2,int(position));result=list(mix(samples[index],samples[index+1],position-index));result[3:6]=norm(result[3:6]);return result
     move=DATA['moves'].get(f.get('attack',''))
     if not move or f.get('attack')=='feint':return 0.,0.
     windup=f.get('attack_windup',move['windup']);duration=f.get('attack_duration',move['duration'])

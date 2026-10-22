@@ -1,6 +1,8 @@
 #include "render.hpp"
 #include "net.hpp"
 #include "scene.hpp"
+#include "oreon.hpp"
+#include "voxel.hpp"
 #include "controls.hpp"
 #include "audio.hpp"
 #include <windowsx.h>
@@ -9,15 +11,15 @@
 #include <iomanip>
 #include <sstream>
 
-enum class Screen {Home,Auth,Shop,Settings,Help,Leaders,Inventory,Worlds,Modes,Workshop};
+enum class Screen {Home,Auth,Shop,Settings,Help,Leaders,Inventory,Worlds,Modes,Workshop,Friends,Realms,Crafting};
 struct App {
     HWND window{};int width=1280,height=800;bool running=true,clicked=false,locked=false,vulkan=false;
     float mouseX=0,mouseY=0,yaw=0,pitch=.28f,time=0;int attackMode=0;
     float cameraDistance=5.2f,cameraTarget=5.2f,mouseDX=0,mouseDY=0;std::string guardDir="centre";int inventoryPage=0,inventorySlot=0,worldPage=0;
     bool arena=false,pendingPlay=false,wasDead=false;Screen screen=Screen::Home;
-    int authMode=0,focus=-1;std::string fields[7]={"", "", "", "", "http://127.0.0.1:8765","My Arena","on start weapon arming\non kill if head heal 20\non revive score 25\non win score 100"};
+    int authMode=0,focus=-1;std::string fields[9]={"", "", "", "", "http://127.0.0.1:8765","My Arena","on start weapon arming\non kill if head heal 20\non revive score 25\non win score 100","","My World"};
     std::string localMessage;float messageUntil=0,damageUntil=0,lastEventTime=-1;
-    Network net;Canvas canvas;std::unique_ptr<Renderer> renderer;
+    Network net;Canvas canvas;std::unique_ptr<Oreon> oreon;std::unique_ptr<Renderer> renderer;
     std::map<std::string,Vec> positions;
     std::map<std::string,PoseTransition> poseTracks;VisualCombatClock animationClock;
     std::map<std::string,VisualMotion> motionTracks;
@@ -34,6 +36,14 @@ struct App {
     bool authPlayRequested=false;int requestedWorld=-2;
     std::string previewMove;float previewPhase=.18f;
     bool signed_in(){return !profile.empty()&&!profile.value("guest",true);}
+    json social=json::object(),realms=json::array();voxel::Landscape landscape;
+    std::string selectedRealm;bool realmMobs=true,realmBots=false,realmPvp=false,realmFriendsBuild=true,buildMode=false;
+    int realmPage=0,friendPage=0,craftPage=0,buildMaterial=0,buildShape=0,buildRotation=0;float lastSocial=-10,lastRealms=-10;
+    const char* materials[5]={"wood","stone","dirt","glass","iron"};const char* shapes[5]={"cube","slab","ramp","pillar","beam"};
+    bool survival(){return world.contains("survival")&&!world["survival"].empty()&&!player.empty();}
+    void open_friends(){if(require_sign_in())return;focus=-1;screen=Screen::Friends;net.queue("/social");lastSocial=time;}
+    void open_realms(){if(require_sign_in())return;focus=-1;screen=Screen::Realms;net.queue("/realms");lastRealms=time;}
+    void join_realm(const std::string& id){if(require_sign_in())return;net.queue("/realms/join",{{"id",id}});pendingPlay=true;screen=Screen::Home;focus=-1;positions.clear();buildMode=false;}
     void save_audio(){try{std::filesystem::create_directories("data");std::ofstream out("data/audio.json");out<<json{{"enabled",music.enabled},{"volume",music.volume}};}catch(const std::exception&) {toast("Music changed; could not save this setting.");}}
     void enter_mode(std::string id){pendingMode=id;if(require_sign_in(true,-3))return;pendingMode.clear();net.queue("/modes/join",{{"mode",id},{"biome",editorBiome}});pendingPlay=true;screen=Screen::Home;focus=-1;}
     void switch_slot(int slot){if(!profile.empty())net.queue("/inventory/switch",{{"slot",slot}});}
@@ -68,6 +78,7 @@ struct App {
     }
     void engine(bool useVulkan,bool useAuto=false){
         automatic=useAuto;
+        if(!oreon){oreon=std::make_unique<Oreon>();canvas.nativeDepth=true;}
         renderer.reset();try{if(useVulkan)renderer=std::make_unique<VulkanRenderer>(window);else renderer=std::make_unique<OpenGLRenderer>(window);vulkan=useVulkan;}
         catch(const std::exception& e){localMessage=std::string("Vulkan unavailable: ")+e.what();messageUntil=time+9;renderer=std::make_unique<OpenGLRenderer>(window);vulkan=false;}
         seenApis.push_back(renderer->name());
@@ -78,6 +89,7 @@ struct App {
     }
     void update(float dt){
         time+=dt;snapshot();
+        {std::lock_guard<std::mutex> guard(net.mutex);social=net.social;realms=net.realms;if(!net.createdRealm.empty()){selectedRealm=net.createdRealm;net.createdRealm.clear();}}
         if(!notice.empty())toast(notice);
         if(pendingPlay&&!busy){
             bool authed,joined;{std::lock_guard<std::mutex> guard(net.mutex);authed=!net.token.empty();joined=net.joined;}
@@ -93,11 +105,13 @@ struct App {
         if(screen==Screen::Leaders&&time-lastBoards>2&&!busy){net.queue("/leaderboards");lastBoards=time;}
         if(screen==Screen::Worlds&&time-lastWorlds>2&&!busy){net.queue("/servers");lastWorlds=time;}
         if(screen==Screen::Modes&&time-lastModes>2&&!busy){net.queue("/modes");lastModes=time;}
+        if(screen==Screen::Friends&&time-lastSocial>3&&!busy){net.queue("/social");lastSocial=time;}
+        if(screen==Screen::Realms&&time-lastRealms>3&&!busy){net.queue("/realms");lastRealms=time;}
         music.update(arena&&screen==Screen::Home);
         if(switchSmoke&&time>1.1f*(switchStep+1)&&switchStep<3){engine(!vulkan);switchStep++;}
         json self;
         if(world.contains("fighters"))for(auto& f:world["fighters"]){
-            std::string id=f.value("id",std::string{});Vec target{f.value("x",0.f),0,f.value("z",0.f)};
+            std::string id=f.value("id",std::string{});Vec target{f.value("x",0.f),f.value("y",0.f),f.value("z",0.f)};
             if(!positions.count(id))positions[id]=target;else positions[id]=positions[id]+(target-positions[id])*std::min(1.f,dt*15);
             if(id==player)self=f;
         }
@@ -144,6 +158,11 @@ struct App {
                     {"yaw",yaw},{"attack",attack},{"block",key(VK_RBUTTON)},{"easy_controls",controls.easy},{"auto_cut",controls.primaryAttack},{"debug_hitboxes",showHitboxes},
                     {"dodge",key(VK_SHIFT)},{"jump",key(VK_SPACE)},{"drop",key('G')},{"pickup",key('F')},{"cast",key('B')},
                     {"aim_zone",aimZone},{"aim_pitch",pitch-.28f},{"guard_dir",guardDir},{"revive",key('H')}};
+        if(survival()){
+            input["aim_pitch"]=pitch;input["build_mode"]=buildMode;input["mine"]=buildMode&&key(VK_LBUTTON);input["place"]=buildMode&&key(VK_RBUTTON);
+            input["build_material"]=materials[buildMaterial];input["build_shape"]=shapes[buildShape];input["build_rotation"]=buildRotation;
+            if(buildMode){input["attack"]="";input["block"]=false;input["cast"]=false;}
+        }
         if(smokeArena){input["move"]={0,0};input["attack"]="";}
         {std::lock_guard<std::mutex> guard(net.mutex);net.input=input;}
     }
@@ -161,17 +180,17 @@ struct App {
             Vec p=positions[player];
             if(world.contains("fighters"))for(const auto& f:world["fighters"])if(f.value("id",std::string{})==player){float jump=std::max(0.f,f.value("jump",0.f)-motionAge);if(jump>0)p.y+=std::sin((.55f-jump)/.55f*PI)*.65f;float fall=f.value("downed",0.f)>0?.8f:std::max(0.f,f.value("fall",0.f)-motionAge);if(fall>0)p.y-=std::min(1.f,fall*4)*.95f;break;}
             if(cameraDistance<.45f){Vec eye=p+Vec{0,1.84f,0};canvas.set_camera(eye,eye+Vec{std::sin(yaw)*std::cos(pitch)*6,-std::sin(pitch)*6,std::cos(yaw)*std::cos(pitch)*6});}
-            else {float blend=std::clamp((cameraDistance-.45f)/2.f,0.f,1.f),d=std::max(0.f,cameraDistance-.45f);Vec eye=p+Vec{-std::sin(yaw)*d,1.84f+d*.63f+pitch*2*blend,-std::cos(yaw)*d};float radius=std::hypot(eye.x,eye.z);if(radius>38.5f){eye.x*=38.5f/radius;eye.z*=38.5f/radius;}Vec nearLook=eye+Vec{std::sin(yaw)*std::cos(pitch)*6,-std::sin(pitch)*6,std::cos(yaw)*std::cos(pitch)*6},farLook=p+Vec{std::sin(yaw)*1.2f,1.25f,std::cos(yaw)*1.2f};canvas.set_camera(eye,nearLook*(1-blend)+farLook*blend);}
+            else {float blend=std::clamp((cameraDistance-.45f)/2.f,0.f,1.f),d=std::max(0.f,cameraDistance-.45f);Vec eye=p+Vec{-std::sin(yaw)*d,1.84f+d*.63f+pitch*2*blend,-std::cos(yaw)*d};float radius=std::hypot(eye.x,eye.z);if(radius>38.5f&&!survival()){eye.x*=38.5f/radius;eye.z*=38.5f/radius;}Vec nearLook=eye+Vec{std::sin(yaw)*std::cos(pitch)*6,-std::sin(pitch)*6,std::cos(yaw)*std::cos(pitch)*6},farLook=p+Vec{std::sin(yaw)*1.2f,1.25f,std::cos(yaw)*1.2f};canvas.set_camera(eye,nearLook*(1-blend)+farLook*blend);}
         }else{
             float a=.52f+std::sin(time*.025f)*.2f;canvas.set_camera({std::sin(a)*9+4,3.0f,std::cos(a)*9},{5.5f,1.15f,0});
         }
-        environment(canvas,time,world.value("world",json::object()));
+        if(survival())landscape.draw(canvas,world["survival"],positions.count(player)?positions[player]:Vec{},time);else environment(canvas,time,world.value("world",json::object()));
         battlefield_objects(canvas,world,time);
         if(showHitboxes)debug_hitboxes(canvas,world,arena&&cameraDistance<.45f?player:std::string{});
         auto round=world.value("match",json::object());
         if(!round.empty()&&round.value("phase",std::string{})=="playing"){float radius=round.value("zone_radius",38.f);for(int i=0;i<64;i++){float a=i*2*PI/64,b=(i+1)*2*PI/64;canvas.beam({std::sin(a)*radius,.07f,std::cos(a)*radius},{std::sin(b)*radius,.07f,std::cos(b)*radius},.035f,{.32f,.65f,.78f,.80f});}}
         if(world.contains("fighters")){
-            for(auto f:world["fighters"]){std::string id=f.value("id",std::string{});if(positions.count(id)){f["x"]=positions[id].x;f["z"]=positions[id].z;}
+            for(auto f:world["fighters"]){std::string id=f.value("id",std::string{});if(positions.count(id)){f["x"]=positions[id].x;f["y"]=positions[id].y;f["z"]=positions[id].z;}
                 float elapsed=motion_elapsed(world.value("time",0.f),combatTime),speed=std::hypot(f.value("move_x",0.f),f.value("move_z",0.f));
                 f["gait"]=f.value("gait",0.f)+speed*elapsed*3.5f;
                 f["jump"]=std::max(0.f,f.value("jump",0.f)-elapsed);f["fall"]=std::max(0.f,f.value("fall",0.f)-elapsed);
@@ -191,7 +210,7 @@ struct App {
         canvas.flush3();
         if(arena&&!round.empty()&&world.contains("fighters")){
             int team=-1;for(auto& f:world["fighters"])if(f.value("id",std::string{})==player){team=f.value("team",-1);break;}
-            for(auto& f:world["fighters"])if(f.value("team",-2)==team&&f.value("id",std::string{})!=player&&f.value("dead",0.f)<=0){float x,y,d;Vec p{f.value("x",0.f),f.value("downed",0.f)>0?1.0f:2.3f,f.value("z",0.f)};if(canvas.project(p,x,y,d)&&x>30&&x<1150&&y>150&&y<640)canvas.text(x,y,(f.value("downed",0.f)>0?"[H] DOWN / ":"ALLY / ")+f.value("name",std::string{}),1.15f,f.value("downed",0.f)>0?GOLD:Colour{.55f,.88f,.72f});}
+            for(auto& f:world["fighters"])if(f.value("team",-2)==team&&f.value("id",std::string{})!=player&&f.value("dead",0.f)<=0){float x,y,d;Vec p{f.value("x",0.f),f.value("y",0.f)+(f.value("downed",0.f)>0?1.0f:2.3f),f.value("z",0.f)};if(canvas.project(p,x,y,d)&&x>30&&x<1150&&y>150&&y<640)canvas.text(x,y,(f.value("downed",0.f)>0?"[H] DOWN / ":"ALLY / ")+f.value("name",std::string{}),1.15f,f.value("downed",0.f)>0?GOLD:Colour{.55f,.88f,.72f});}
         }
         auto pickup=world.value("pickup",json::object());
         if(arena&&!pickup.empty()&&world.contains("drops"))for(const auto& d:world["drops"]){
@@ -204,7 +223,7 @@ struct App {
         }
         if(arena&&world.contains("fighters"))for(auto& f:world["fighters"]){
             if(f.value("id",std::string{})==player||f.value("dead",0.f)>0)continue;
-            float x,y,d;Vec p{f.value("x",0.f),2.55f,f.value("z",0.f)};
+            float x,y,d;Vec p{f.value("x",0.f),f.value("y",0.f)+2.55f,f.value("z",0.f)};
             if(canvas.project(p,x,y,d)&&d<25&&x>40&&x<1240&&y>95&&y<660){
                 if(!round.empty()&&(d>10||std::abs(x-640)>180))continue;
                 if(!round.empty()){bool ally=false;for(auto& me:world["fighters"])if(me.value("id",std::string{})==player){ally=me.value("team",-1)==f.value("team",-2);break;}if(ally)continue;}
@@ -232,16 +251,17 @@ struct App {
         canvas.text(57,380,"An open arena of blades and nerve.\nRead your opponent. Choose your strike.\nFall, return, and fight again.",1.75f,MUTED);
         if(button(57,483,343,70,restoringLogin?"RESTORING ACCOUNT...":busy?"CONNECTING...":!signed_in()?"SIGN UP TO PLAY":(!player.empty()?"RETURN TO ARENA":"ENTER THE ARENA"),true))play();
         if(button(414,483,142,70,"HOW TO PLAY"))screen=Screen::Help;
-        if(button(57,563,240,45,"GAME MODES"))screen=Screen::Modes;if(button(310,563,246,45,"WORLD WORKSHOP"))screen=Screen::Workshop;
+        if(button(57,563,150,45,"GAME MODES"))screen=Screen::Modes;if(button(219,563,157,45,"WORKSHOP"))screen=Screen::Workshop;if(button(388,563,168,45,"MY WORLDS"))open_realms();
         canvas.text(57,616,signed_in()?("HELLO, "+profile.value("username",std::string("FIGHTER"))):restoringLogin?"RECONNECTING TO YOUR SAVED ACCOUNT...":"CREATE YOUR ACCOUNT / ALREADY REGISTERED? SIGN IN",1.35f,signed_in()?GOLD:MUTED);
         canvas.rect(57,631,490,96,{.07f,.10f,.11f,.93f});canvas.border(57,631,490,96,{.19f,.25f,.25f});canvas.rect(57,631,3,96,GOLD);
         canvas.text(77,651,"A BLADE IS ALL YOU NEED",1.7f,GOLD);canvas.text(77,680,"Earn XP, skill and crowns. Build your arsenal.\nBlades, bows, armour and rare arcane weapons.",1.45f,WHITE);
         canvas.rect(930,600,294,125,{.04f,.065f,.067f,.89f});canvas.text(951,619,"100 PLAYERS PER SERVER",1.5f,GOLD);
         canvas.text(951,650,world.value("world",json::object()).value("name",std::string("CHOOSE YOUR NEXT ARENA")),1.45f,WHITE);
         if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
+        if(button(951,548,251,40,"FRIENDS"))open_friends();
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.11.0",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.12.0",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});
@@ -276,6 +296,7 @@ struct App {
     }
 #include "menus.inc"
 #include "workshop.inc"
+#include "realms.inc"
     void settings(){
         panel("ARENA SETTINGS","A LOCAL SERVER WORKS NOW. REMOTE SERVERS CAN BE ADDED LATER.");
         field(315,233,650,"SERVER ADDRESS",4);
@@ -283,7 +304,7 @@ struct App {
             arena=false;pendingPlay=false;net.queue("/arena/leave");net.server(fields[4]);net.queue("/health");positions.clear();
         }
         canvas.text(315,419,"ONE GAME / BOTH GRAPHICS ENGINES",1.7f,GOLD);
-        if(button(315,455,208,52,"AUTO",automatic))engine(true,true);
+        if(button(315,455,208,52,"AUTO / OPENGL",automatic))engine(false,true);
         if(button(535,455,208,52,"OPENGL",!automatic&&!vulkan))engine(false);
         if(button(755,455,210,52,"VULKAN",!automatic&&vulkan))engine(true);
         canvas.text(315,529,"COMBAT CONTROLS",1.6f,GOLD);
@@ -336,7 +357,7 @@ struct App {
         json slots=profile.value("weapon_slots",json::array({"knife","","","",""}));
         for(int i=0;i<5;i++){float x=450+i*119;std::string id=i<static_cast<int>(slots.size())?slots[i].get<std::string>():"";bool active=id==heldWeapon&&!id.empty();canvas.rect(x,714,112,54,active?Colour{.38f,.28f,.16f,.94f}:Colour{.04f,.07f,.075f,.90f});canvas.border(x,714,112,54,active?GOLD:Colour{.20f,.27f,.25f});canvas.text(x+10,723,std::to_string(i+1),1.4f,GOLD);canvas.text(x+10,748,id.empty()?"EMPTY":id.substr(0,13),1.05f,WHITE);}
         auto info=item_info(heldWeapon);std::string weaponLabel=heldWeapon=="fists"?"BARE HANDS / F: RECOVER":info.value("name",heldWeapon);canvas.text(450,648,weaponLabel+" / AIM: "+aimZone+" [Z X C]",1.3f,GOLD);
-        const char* moveNames[]={"LEFT CUT","RIGHT CUT","OVERHEAD","THRUST"};canvas.text(450,677,blocking?"GUARD: "+shownGuard+" / MOUSE OR A D W S":controls.easy?std::string("MOVE: ")+moveNames[attackMode]+" / HOLD LMB / RMB: BLOCK":std::string("MOVE: ")+moveNames[attackMode]+" / GUARD: "+guardDir,1.2f,blocking?Colour{.4f,.85f,.95f}:MUTED);canvas.text(450,695,"N RISING / K REVERSE SPIN / U POMMEL / L FEINT",1.05f,MUTED);canvas.text(1100,709,"E ARMOURY\nT SCORES\nESC MENU",1.2f,MUTED);
+        const char* moveNames[]={"LEFT CUT","RIGHT CUT","OVERHEAD","THRUST"};canvas.text(450,677,blocking?"GUARD: "+shownGuard+" / MOUSE OR A D W S":controls.easy?std::string("MOVE: ")+moveNames[attackMode]+" / HOLD LMB / RMB: BLOCK":std::string("MOVE: ")+moveNames[attackMode]+" / GUARD: "+guardDir,1.2f,blocking?Colour{.4f,.85f,.95f}:MUTED);canvas.text(450,695,"N RISING / K REVERSE SPIN / U POMMEL / L FEINT",1.05f,MUTED);canvas.text(1100,709,survival()?"E CRAFT\nJ FRIENDS\nESC MENU":"E ARMOURY\nT SCORES\nESC MENU",1.2f,MUTED);
         if(!self.is_null()&&death<=0&&self.value("downed",0.f)<=0&&pickup.empty()&&world.value("revive",json::object()).empty()){
             float elapsed=motion_elapsed(world.value("time",0.f),animationClock.value),age=animationClock.value-self.value("attack_started",0.f);
             auto readout=action_readout(self.value("attack",std::string{}),age,self.value("attack_windup",.24f),self.value("attack_duration",.60f),std::max(0.f,self.value("cooldown",0.f)-elapsed),std::max(0.f,self.value("dodge",0.f)-elapsed),blocking,weapon_family(heldWeapon)=="bow"||weapon_family(heldWeapon)=="crossbow"||weapon_family(heldWeapon)=="slingshot"||weapon_family(heldWeapon)=="staff");
@@ -354,8 +375,9 @@ struct App {
     }
     void frame(){
         canvas.begin(width,height);world_view();
+        if(arena&&screen==Screen::Home)survival_hud();
         if(!previewMove.empty()){canvas.rect(30,25,620,69,{.035f,.055f,.06f,.92f});canvas.text(46,38,"MOVEMENT PREVIEW / "+previewMove,2,GOLD);canvas.text(46,69,"VISUAL MANNEQUIN / NO ARENA SESSION",1.25f,MUTED);}else if(arena&&screen==Screen::Home)hud();else{
-            if(screen==Screen::Home)home();else if(screen==Screen::Auth)auth();else if(screen==Screen::Shop)shop();else if(screen==Screen::Settings)settings();else if(screen==Screen::Leaders)leaderboard_view();else if(screen==Screen::Inventory)inventory_view();else if(screen==Screen::Worlds)worlds_view();else if(screen==Screen::Modes)modes_view();else if(screen==Screen::Workshop)workshop_view();else help();
+            if(screen==Screen::Home)home();else if(screen==Screen::Auth)auth();else if(screen==Screen::Shop)shop();else if(screen==Screen::Settings)settings();else if(screen==Screen::Leaders)leaderboard_view();else if(screen==Screen::Inventory)inventory_view();else if(screen==Screen::Worlds)worlds_view();else if(screen==Screen::Modes)modes_view();else if(screen==Screen::Workshop)workshop_view();else if(screen==Screen::Friends)friends_view();else if(screen==Screen::Realms)realms_view();else if(screen==Screen::Crafting)crafting_view();else help();
         }
         std::string value=!error.empty()?error:time<messageUntil?localMessage:std::string{};
         if(!value.empty()){
@@ -363,7 +385,7 @@ struct App {
             float noticeY=arena?(world.value("match",json::object()).empty()?114.f:495.f):92.f;
             canvas.rect(30,noticeY,1220,35,{.08f,.105f,.105f,.98f});canvas.text(44,noticeY+12,value,1.5f,!error.empty()?Colour{1,.55f,.32f}:GOLD);
         }
-        renderer->captureRequested=captureNext;renderer->draw(canvas.mesh,width,height);clicked=false;rightClicked=false;
+        renderer->captureRequested=captureNext;renderer->draw_pixels(oreon->draw(canvas,width,height),width,height);clicked=false;rightClicked=false;
         if(captureNext&&!screenshot.empty())capture(screenshot);captureNext=false;
     }
     void capture(const std::string& path){
@@ -393,7 +415,12 @@ LRESULT CALLBACK window_proc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
                 }
             }
             if(wp==VK_ESCAPE&&!(lp&(1<<30))){if(app->screen!=Screen::Home){app->screen=Screen::Home;app->focus=-1;app->authPlayRequested=false;}else app->arena=!app->arena&& !app->player.empty();}
-            if(wp=='E'&&app->arena&&app->focus<0&&!(lp&(1<<30)))app->screen=app->screen==Screen::Shop?Screen::Home:Screen::Shop;
+            if(wp=='E'&&app->arena&&app->focus<0&&!(lp&(1<<30)))app->screen=app->screen==Screen::Shop||app->screen==Screen::Crafting?Screen::Home:app->survival()?Screen::Crafting:Screen::Shop;
+            if(app->survival()&&app->arena&&app->screen==Screen::Home&&app->focus<0&&!(lp&(1<<30))){
+                if(wp==VK_TAB)app->buildMode=!app->buildMode;
+                if(wp=='J')app->open_friends();
+                if(app->buildMode){if(wp=='R')app->buildRotation=(app->buildRotation+1)%4;if(wp==VK_OEM_4)app->buildShape=(app->buildShape+4)%5;if(wp==VK_OEM_6)app->buildShape=(app->buildShape+1)%5;if(wp==VK_OEM_COMMA)app->buildMaterial=(app->buildMaterial+4)%5;if(wp==VK_OEM_PERIOD)app->buildMaterial=(app->buildMaterial+1)%5;}
+            }
             if(wp=='T'&&app->focus<0&&app->screen!=Screen::Auth&&app->screen!=Screen::Settings&&!(lp&(1<<30)))app->leaders();
             if(wp=='I'&&app->focus<0&&app->screen!=Screen::Auth&&app->screen!=Screen::Settings&&!(lp&(1<<30)))app->screen=app->screen==Screen::Inventory?Screen::Home:Screen::Inventory;
             if(wp>='1'&&wp<='5'&&app->arena&&app->screen==Screen::Home&&!(lp&(1<<30)))app->switch_slot(static_cast<int>(wp-'1'));
@@ -414,7 +441,7 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
         std::filesystem::path root=std::filesystem::path(executable).parent_path().parent_path();SetCurrentDirectoryW(root.c_str());
         std::string args=command,sessionFile="data/login-session.bin";
         if(auto pos=args.find("--session-file=");pos!=std::string::npos){size_t start=pos+15,end=args.find(' ',start);sessionFile=args.substr(start,end==std::string::npos?end:end-start);}
-        App state(sessionFile);app=&state;state.vulkan=args.find("--opengl")==std::string::npos;state.smoke=args.find("--smoke")!=std::string::npos;state.smokeArena=args.find("--arena")!=std::string::npos;state.switchSmoke=args.find("--switch")!=std::string::npos;
+        App state(sessionFile);app=&state;state.vulkan=args.find("--vulkan")!=std::string::npos;state.smoke=args.find("--smoke")!=std::string::npos;state.smokeArena=args.find("--arena")!=std::string::npos;state.switchSmoke=args.find("--switch")!=std::string::npos;
         if(args.find("--shop")!=std::string::npos)state.screen=Screen::Shop;
         if(args.find("--ranged")!=std::string::npos)state.shopCategory=1;
         if(args.find("--defence")!=std::string::npos)state.shopCategory=2;
@@ -424,6 +451,8 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
         if(args.find("--worlds")!=std::string::npos)state.screen=Screen::Worlds;
         if(args.find("--modes")!=std::string::npos)state.screen=Screen::Modes;
         if(args.find("--workshop")!=std::string::npos)state.screen=Screen::Workshop;
+        if(args.find("--friends")!=std::string::npos)state.open_friends();
+        if(args.find("--realms")!=std::string::npos)state.open_realms();
         if(args.find("--first-person")!=std::string::npos)state.cameraDistance=state.cameraTarget=0;
         if(args.find("--overhead")!=std::string::npos)state.cameraDistance=state.cameraTarget=14;
         if(auto pos=args.find("--preview-move=");pos!=std::string::npos){size_t start=pos+15,end=args.find(' ',start);state.previewMove=args.substr(start,end==std::string::npos?end:end-start);}
@@ -447,7 +476,7 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
                 std::filesystem::create_directories("screenshots");std::string tag=state.switchSmoke?"combined":state.vulkan?"vulkan":"opengl";if(!state.previewMove.empty())tag+="-pose-"+state.previewMove;else if(state.screen==Screen::Auth)tag+="-auth";else if(state.smokeArena)tag+=state.cameraTarget<.45f?"-first-person":state.cameraTarget>12?"-overhead":"-arena";else if(state.screen==Screen::Shop)tag+="-shop";else if(state.screen==Screen::Leaders)tag+="-leaders";else if(state.screen==Screen::Inventory)tag+="-inventory";else if(state.screen==Screen::Worlds)tag+="-worlds";else tag+="-home";
                 state.capture("screenshots/"+tag+".bmp");
                 json report={{"renderer",state.renderer->name()},{"frames",frameCount},{"seconds",fpsTotal},{"vertices",state.canvas.mesh.size()},{"connected",state.connected},{"player",state.player},{"fighters",state.world.value("fighters",json::array()).size()},{"humans",state.world.value("humans",0)},{"bots",state.world.value("bots",0)},{"error",state.error}};
-                report["graphics_engines_used"]=state.seenApis;report["catalog_items"]=state.catalog.size();report["rank"]=state.level;report["skill"]=state.skill;report["xp"]=state.xp;
+                report["scene_engine"]="Oreon";report["oreon_frames"]=state.oreon->frames;report["world_triangles"]=state.canvas.worldTriangles.size();report["graphics_engines_used"]=state.seenApis;report["catalog_items"]=state.catalog.size();report["rank"]=state.level;report["skill"]=state.skill;report["xp"]=state.xp;
                 report["camera_distance"]=state.cameraDistance;report["world"]=state.world.value("world",json::object()).value("name",std::string{});report["signed_in"]=state.signed_in();report["weapon_slots"]=state.profile.value("weapon_slots",json::array());
                 report["signup_screen"]=state.screen==Screen::Auth&&state.authMode==1;report["xp_to_next"]=decimal_text(state.profile,"xp_to_next","79");
                 std::ofstream("screenshots/"+tag+".json")<<report.dump(2);Sleep(500);break;
@@ -457,7 +486,7 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
         if(state.locked){ClipCursor(nullptr);ShowCursor(TRUE);}
         bool joined;{std::lock_guard<std::mutex> guard(state.net.mutex);joined=state.net.joined;}
         if(joined){state.net.queue("/arena/leave");Sleep(70);}
-        state.renderer.reset();DestroyWindow(state.window);app=nullptr;return 0;
+        state.renderer.reset();state.oreon.reset();DestroyWindow(state.window);app=nullptr;return 0;
     }catch(const std::exception& error){
         std::ofstream("client-error.log")<<error.what();MessageBoxA(nullptr,error.what(),"Xervexl could not start",MB_OK|MB_ICONERROR);return 1;
     }
