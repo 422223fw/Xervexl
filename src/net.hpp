@@ -19,6 +19,7 @@ struct Network {
     json world=json::object(),profile=json::object(),input=json::object(),catalog=json::array(),boards=json::object(),worlds=json::array();
     json modes=json::array(),blueprint=json::object();std::string savedMode,blueprintId;
     json social=json::object(),realms=json::array();std::string createdRealm;
+    json techniques=json::object();
     std::string url="http://127.0.0.1:8765",token,error,message,player;
     std::atomic<bool> running{true};bool connected=false,joined=false,busy=false,restoring=false;
     unsigned generation=0;
@@ -128,6 +129,7 @@ struct Network {
                         if(result.contains("worlds"))worlds=result["worlds"];
                         if(result.contains("modes"))modes=result["modes"];
                         if(result.contains("social"))social=result["social"];
+                        if(result.contains("techniques"))techniques=result["techniques"];
                         if(result.contains("realms"))realms=result["realms"];
                         if(result.contains("created_realm"))createdRealm=result["created_realm"].get<std::string>();
                         if(result.contains("saved_mode"))savedMode=result["saved_mode"].get<std::string>();

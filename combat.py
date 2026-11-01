@@ -17,6 +17,7 @@ class Combat:
         if ticket and not ticket['projectile']:self.learning.finish(ticket,miss=True)
         f.update(attack='',windup=0.,queued_attack='',queued_repeat=False)
         f['cooldown']=max(f['cooldown'],minimum_recovery)
+        self.cancel_technique(f)
 
     def emit(self,kind,**fields):
         self.learning_event(kind,fields)
@@ -39,7 +40,9 @@ class Combat:
     def grant(self,f,**values):
         for key,value in values.items(): f[key]=max(0,f.get(key,0)+value)
         old=f["level"];f["level"]=level_for_xp(f["xp"])
-        if f["level"]>old:self.emit("level",target=f["id"],level=f["level"])
+        if f["level"]>old:
+            self.emit("level",target=f["id"],level=f["level"])
+            self.emit('technique_unlock',target=f['id'],level=f['level'],count=f['level']-old)
         self.sync_progress(f)
 
     def parry_reward(self,defender,attacker,projectile=False):
@@ -99,6 +102,7 @@ class Combat:
 
     def drop_weapon(self,f,disarmer=None):
         if f["weapon"]=="fists" or f["dead"]>0:return False
+        self.cancel_technique(f)
         item=f["weapon"]
         f["weapon"]="fists";f["attack"]="";f["windup"]=0;f["cooldown"]=.6;f["queued_attack"]=""
         f["disarmed"]=1.0 if disarmer else .3
@@ -173,6 +177,7 @@ class Combat:
 
     def finish_kill(self,attacker,victim,zone='body'):
         if victim['dead']>0:return
+        self.cancel_technique(victim)
         victim.update(hp=0.,dead=3.5,windup=0.,attack='',queued_attack='');victim['deaths']+=1
         self.mode_eliminated(victim,attacker)
         if attacker:
@@ -242,6 +247,7 @@ class Combat:
                     if distance<=.19**2 and (not body or t<=body[0]+.10):
                         defended=True;contact=hb.add(a,hb.mul(hb.sub(b,a),t))
                 if defended:
+                    self.cancel_technique(attacker)
                     resolved.add(victim['id'])
                     tight=abs(angle(math.atan2(attacker['x']-victim['x'],attacker['z']-victim['z'])-victim['yaw']))<.55
                     timed=0<=self.clock-victim['block_since']<=.18 and tight

@@ -15,6 +15,13 @@ ACTIONS = ('advance', 'retreat', 'strafe_l', 'strafe_r', 'block', 'left',
            'right', 'overhead', 'thrust', 'disarm', 'dodge')
 ATTACKS = ('left', 'right', 'overhead', 'thrust', 'disarm')
 
+def __getattr__(name):
+    # Preserve the compatibility export without importing the tactical module
+    # while it is still importing this module's context/ATTACKS definitions.
+    if name=='BotBrain':
+        from bot_brain import BotBrain
+        return BotBrain
+    raise AttributeError(name)
 
 def context(bot, opponent):
     own, enemy = ITEMS[bot['weapon']], ITEMS[opponent['weapon']]

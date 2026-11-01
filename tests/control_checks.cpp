@@ -4,6 +4,7 @@
 
 int main(){
     CombatControls c;CombatKeys k;k.left=true;
+    CombatKeys walk;walk.forward=1;assert(c.attack(walk).empty());walk.forward=0;walk.side=1;assert(c.attack(walk).empty());
     for(int forward=-1;forward<=1;forward++)for(int side=-1;side<=1;side++){
         k.forward=forward;k.side=side;
         std::string expected=side<0?"left":side>0?"right":forward>0?"overhead":forward<0?"thrust":"left";

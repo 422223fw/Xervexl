@@ -75,6 +75,7 @@ struct Canvas{
 };
 
 #include "environment.hpp"
+#include "appearance_render.hpp"
 
 inline std::string weapon_family(const std::string& id){
     if(id=="fists")return "unarmed";if(id=="bow"||id=="longbow"||id=="moonbow")return "bow";
@@ -161,11 +162,12 @@ inline void blade_pose(const json& f,float time,Vec p,Vec front,Vec side,float l
 }
 inline void first_person_arms(Canvas& c,const json& f,float yaw,float pitch,float time,const CombatPose* visual=nullptr){
     if(f.value("dead",0.f)>0||f.value("fall",0.f)>0)return;
+    Colour sleeve=appearance_colour(f,"cloth",{.28f,.34f,.31f}),skin=appearance_colour(f,"skin",{.68f,.47f,.34f});
     Vec front{std::sin(yaw)*std::cos(pitch),-std::sin(pitch),std::cos(yaw)*std::cos(pitch)},side{std::cos(yaw),0,-std::sin(yaw)};
     Vec base=c.camera-Vec{0,1.6f,0}+front*.58f,hand,tip;blade_pose(f,time,base,front,side,weapon_length(f.value("weapon",std::string("knife"))),hand,tip,visual);
-    Vec shoulder=base+side*.34f+Vec{0,1.43f,0},elbow=solve_joint(shoulder,hand,side-Vec{0,.6f,0},.36f);c.beam(shoulder,elbow,.075f,{.28f,.34f,.31f});c.beam(elbow,hand,.066f,{.28f,.34f,.31f});c.ellipsoid(hand,{.075f,.075f,.075f},{.68f,.47f,.34f},yaw,4,6);
+    Vec shoulder=base+side*.34f+Vec{0,1.43f,0},elbow=solve_joint(shoulder,hand,side-Vec{0,.6f,0},.36f);c.beam(shoulder,elbow,.075f,sleeve);c.beam(elbow,hand,.066f,sleeve);c.ellipsoid(hand,{.075f,.075f,.075f},skin,yaw,4,6);
     held_equipment(c,f.value("weapon",std::string("knife")),hand,tip,side,front);
-    if(two_handed(f)){Vec leftRoot=base-side*.34f+Vec{0,1.43f,0},left=hand-norm(tip-hand)*.11f,joint=solve_joint(leftRoot,left,-side-Vec{0,.6f,0},.36f);c.beam(leftRoot,joint,.075f,{.28f,.34f,.31f});c.beam(joint,left,.066f,{.28f,.34f,.31f});c.ellipsoid(left,{.075f,.075f,.075f},{.68f,.47f,.34f},yaw,4,6);}
+    if(two_handed(f)){Vec leftRoot=base-side*.34f+Vec{0,1.43f,0},left=hand-norm(tip-hand)*.11f,joint=solve_joint(leftRoot,left,-side-Vec{0,.6f,0},.36f);c.beam(leftRoot,joint,.075f,sleeve);c.beam(joint,left,.066f,sleeve);c.ellipsoid(left,{.075f,.075f,.075f},skin,yaw,4,6);}
 }
 inline void fighter(Canvas& c,const json& f,float time,bool self=false,const CombatPose* visual=nullptr){
     if(f.value("dead",0.f)>0)return;
@@ -177,6 +179,7 @@ inline void fighter(Canvas& c,const json& f,float time,bool self=false,const Com
     std::string id=f.value("id",std::string{});unsigned hash=0;for(unsigned char a:id)hash=hash*31+a;
     Colour cloth=self?Colour{.21f,.34f,.32f}:Colour{.28f+float(hash%4)*.07f,.18f+float(hash%3)*.05f,.13f+float(hash%5)*.04f};
     Colour skin{.69f,.49f,.34f},metal{.56f,.59f,.57f},dark{.18f,.18f,.16f};
+    cloth=appearance_colour(f,"cloth",cloth);skin=appearance_colour(f,"skin",skin);dark=appearance_colour(f,"trousers",dark);
     auto mob=f.value("mob_kind",std::string{});if(mob=="golem"){skin={.48f,.49f,.44f};cloth={.34f,.36f,.32f};dark={.25f,.27f,.24f};}else if(mob=="revenant"){skin={.54f,.62f,.53f};cloth={.16f,.22f,.20f};}
     Vec relative=p+Vec{0,1,0}-c.camera;float depth=dot(relative,c.forward);
     if(!self&&(depth<-3.5f||std::abs(dot(relative,c.right))>std::max(0.f,depth)*.915f*c.aspect+3.5f||std::abs(dot(relative,c.up))>std::max(0.f,depth)*.915f+3.5f))return;
@@ -184,7 +187,7 @@ inline void fighter(Canvas& c,const json& f,float time,bool self=false,const Com
         c.ellipsoid(p+Vec{0,1.2f,0},{.33f,.4f,.22f},cloth,yaw,3,6);c.ellipsoid(p+Vec{0,1.87f,0},{.18f,.23f,.18f},skin,yaw,3,6);
         float speed=std::min(1.f,std::hypot(f.value("move_x",0.f),f.value("move_z",0.f))/4.4f);Vec travel=norm({f.value("move_x",0.f),0,f.value("move_z",0.f)});
         for(int leg:{-1,1}){auto step=foot_step(f.value("gait",0.f),speed,leg);Vec hip=p+hipSide*(leg*.16f)+Vec{0,.86f,0},foot=p+hipSide*(leg*.19f)+travel*step.travel+hipFront*(pose.lunge*(leg==1?1:-.4f))+Vec{0,.12f+step.lift,0};Vec knee=solve_joint(hip,foot,hipFront,.44f);c.beam(hip,knee,.095f,dark);c.beam(knee,foot,.085f,dark);}
-        Vec hand,tip;blade_pose(f,time,p,bladeFront,bladeSide,weapon_length(f.value("weapon",std::string("knife"))),hand,tip,&pose);c.beam(p+bladeSide*.30f+Vec{0,1.43f,0},hand,.07f,cloth);if(two_handed(f))c.beam(p-bladeSide*.30f+Vec{0,1.43f,0},hand-norm(tip-hand)*.11f,.07f,cloth);held_equipment(c,f.value("weapon",std::string("knife")),hand,tip,bladeSide,bladeFront);return;
+        Vec hand,tip;blade_pose(f,time,p,bladeFront,bladeSide,weapon_length(f.value("weapon",std::string("knife"))),hand,tip,&pose);c.beam(p+bladeSide*.30f+Vec{0,1.43f,0},hand,.07f,cloth);if(two_handed(f))c.beam(p-bladeSide*.30f+Vec{0,1.43f,0},hand-norm(tip-hand)*.11f,.07f,cloth);held_equipment(c,f.value("weapon",std::string("knife")),hand,tip,bladeSide,bladeFront);character_cape(c,f,p,front,side,time,true);return;
     }
     // Flattened ground shadow.
     for(int i=0;i<16;i++){float a=i*2*PI/16,b=(i+1)*2*PI/16;c.tri3({x,p.y+.02f,z},{x+std::sin(a)*.7f,p.y+.02f,z+std::cos(a)*.45f},{x+std::sin(b)*.7f,p.y+.02f,z+std::cos(b)*.45f},{.21f,.20f,.16f,.45f},false);}
@@ -196,7 +199,9 @@ inline void fighter(Canvas& c,const json& f,float time,bool self=false,const Com
     c.ellipsoid(p-side*.34f+Vec{0,1.44f,0},{.15f,.13f,.17f},torso,yaw);
     c.box(p+Vec{0,.87f,0},{.69f,.12f,.40f},{.22f,.17f,.11f},yaw);c.box(p+front*.225f+Vec{0,.87f,0},{.13f,.13f,.05f},GOLD,yaw);
     c.cylinder(p+Vec{0,1.56f,0},.11f,.14f,skin,8);c.ellipsoid(p+Vec{0,1.87f,0},{.18f,.23f,.18f},skin,yaw,8,12);
-    c.ellipsoid(p+Vec{0,2.04f,0},{.195f,.12f,.195f},!f.value("helmet",std::string{}).empty()?metal:Colour{.19f,.15f,.11f},yaw,6,12);
+    auto hairStyle=f.value("appearance",json::object()).value("hair_style",std::string("cropped"));Colour hair=appearance_colour(f,"hair",{.19f,.15f,.11f});
+    if(!f.value("helmet",std::string{}).empty()||hairStyle!="bald")c.ellipsoid(p+Vec{0,2.04f,0},{.195f,.12f,.195f},!f.value("helmet",std::string{}).empty()?metal:hair,yaw,6,12);
+    if(hairStyle=="crest"&&f.value("helmet",std::string{}).empty())c.ellipsoid(p+Vec{0,2.13f,0},{.065f,.13f,.18f},hair,yaw,5,8);
     c.ellipsoid(p+front*.178f+Vec{0,1.86f,0},{.04f,.075f,.06f},skin,yaw,4,6);
     c.box(p+front*.18f+side*.075f+Vec{0,1.92f,0},{.055f,.03f,.03f},dark,yaw);c.box(p+front*.18f-side*.075f+Vec{0,1.92f,0},{.055f,.03f,.03f},dark,yaw);
     bool block=f.value("block",false);std::string attack=f.value("attack",std::string{});
@@ -208,5 +213,6 @@ inline void fighter(Canvas& c,const json& f,float time,bool self=false,const Com
     held_equipment(c,weapon,hand,tip,bladeSide,bladeFront);
     Vec free=free_hand_offset(block,!f.value("shield",std::string{}).empty(),f.value("gait",0.f),moving);Vec left=p+side*free.x+front*free.z+Vec{0,free.y,0};if(two_handed(f))left=hand-norm(tip-hand)*.11f;else left=limit_reach(leftShoulder,left,.70f);Vec leftElbow=solve_joint(leftShoulder,left,-side-Vec{0,.6f,0},.36f);c.beam(leftShoulder,leftElbow,.08f,cloth);c.beam(leftElbow,left,.067f,cloth);c.box(left,{.14f,.14f,.14f},skin,yaw);
     if(!f.value("shield",std::string{}).empty()){c.box(left+front*.1f,{.55f,.75f,.13f},dark,yaw);c.box(left+front*.18f,{.48f,.66f,.05f},metal,yaw);c.box(left+front*.22f,{.12f,.14f,.07f},GOLD,yaw);}
+    tunic_decoration(c,f,p,front,side);character_cape(c,f,p,front,side,time);
     float fall=f.value("fall",0.f);if(fall>0){float duration=f.value("fall_duration",1.25f),pose=std::min(1.f,(duration-fall)*7)*std::min(1.f,fall*4),a=pose*PI*.48f;auto rotate=[&](Vec v){Vec d=v-p;float localY=d.y,localZ=dot(d,front);return p+side*dot(d,side)+Vec{0,localY*std::cos(a)-localZ*std::sin(a)+.08f,0}+front*(localY*std::sin(a)+localZ*std::cos(a));};for(size_t i=bodyBegin;i<c.triangles.size();i++){auto& t=c.triangles[i];t.a=rotate(t.a);t.b=rotate(t.b);t.c=rotate(t.c);t.depth=dot((t.a+t.b+t.c)*(1.f/3)-c.camera,c.forward);c.worldTriangles[t.worldIndex]=t;}}
 }

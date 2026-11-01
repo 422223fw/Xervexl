@@ -24,6 +24,8 @@ from rules import (VERSION,WEAPONS,GEAR,CATALOG,ITEMS,RANGED,PERSISTENT,
                    PROGRESSION_VERSION,migrate_progression,public_integer,MOVES)
 from combat import Combat
 from social import Social
+from appearance import Appearance
+from techniques import Techniques
 from realms import Realms
 import hitboxes as hb
 from arena_features import ArenaFeatures, SERVER_CAPACITY
@@ -57,7 +59,7 @@ class AuthenticationError(ValueError):
     pass
 
 
-class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
+class Arena(Appearance,Techniques,Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat):
     def __init__(self, data_path=None, seed=None):
         self.path = Path(data_path or ROOT / "data" / "accounts.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,6 +115,7 @@ class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat
                     stability_upgrade_price=stability_price(user["stability_upgrades"]),fall_resistance=1-.4**user["stability_upgrades"],
                     grip_upgrade_price=grip_price(user["grip_upgrades"]),disarm_risk_multiplier=grip_risk_multiplier(user["grip_upgrades"]),guest=not bool(user["password"]))
         result.update(next_level_xp=public_integer(next_xp),level_start_xp=public_integer(start),level_progress_xp=public_integer(user["xp"]-start),level_cost_xp=public_integer(next_xp-start),xp_to_next=public_integer(next_xp-user["xp"]),xp_progress=(user["xp"]-start)/(next_xp-start))
+        result.update(appearance=self.appearance_for(user),**self.technique_profile(user,level))
         return result
 
     def account(self, name, email="", password=""):
@@ -140,6 +143,8 @@ class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat
         f.update(world_id=self.default_world,stability_upgrades=0,grip_upgrades=0,grip_test_after=0.,balance=100.,fall=0.,fall_duration=1.25,
                  guard_dir="centre",guard_changed=-999.,guard_from=[],body_yaw=f["yaw"],move_x=0.,move_z=0.,gait=0.,attack_started=0.,attack_windup=.24,attack_duration=.60,
                  queued_attack="",queued_until=0.,queued_auto_cut=False)
+        f.update(technique_rank=0,technique_steps=[],technique_index=0,last_technique=False)
+        if not bot:f['appearance']=self.appearance_for(self.users.get(name.lower(),{}))
         if bot:
             f["grip_upgrades"]=max(0,depth-3)
             f["weapon"] = self.rng.choice(["knife", "arming", "sabre", "longsword"])
@@ -310,6 +315,9 @@ class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat
             s = self.authenticate(token)
             user = s["user"]
             self.require_account(s)
+            if route=='/appearance/save':return self.save_appearance(s,body)
+            if route=='/techniques':return self.technique_catalog(s,body)
+            if route=='/techniques/select':return self.select_technique(s,body)
             if route=='/social':return dict(social=self.social_status(s))
             if route=='/social/request':return self.social_request(s,body)
             if route=='/social/respond':return self.social_respond(s,body)
@@ -438,6 +446,9 @@ class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat
                         if not math.isfinite(pitch):raise ValueError()
                     except (TypeError,ValueError):raise ValueError("Invalid aim.")
                     f["input"]["aim_pitch"]=clamp(pitch,-.8,.8)
+                    chosen=body.get('technique_rank',0)
+                    if type(chosen) is not int or chosen!=0 and not 2<=chosen<=f['level']:raise ValueError('Reach that rank to unlock this technique.')
+                    f['input']['technique_rank']=chosen
                     f["last_input"] = self.clock
                     if self.is_realm(f):
                         f['input'].update(build_mode=bool(body.get('build_mode')),mine=bool(body.get('mine')),place=bool(body.get('place')),
@@ -450,7 +461,7 @@ class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat
                 for a in self.fighters.values():
                     if a["world_id"]!=room:continue
                     public.append({k:public_integer(a[k]) if k in ("xp","skill","coins","kills","deaths","level") else a[k] for k in ("id","name","bot","depth","x","z","yaw","hp","max_hp","stamina","weapon","shield","armour","helmet","spell","kills","deaths","block","jump","dodge","dead","attack","attack_id","windup","spawn_safe","level","xp","skill","coins","disarmed","spell_cd","ward","slow","cooldown","world_id","body_yaw","move_x","move_z","gait","guard_dir","attack_started","attack_windup","attack_duration","aim_zone","balance","fall","fall_duration")})
-                    public[-1].update(y=a.get('y',0.),mob_kind=a.get('mob_kind',''),build_mode=a.get('build_mode',False),mine_progress=a.get('mine_progress',0.),mining_started=a.get('mining_started',0.),team=a.get('team',-1),downed=a.get('downed',0.),eliminated=bool(a.get('eliminated',False)),revive_progress=a.get('revive_progress',0.),match_score=a.get('match_score',0),match_xp=a.get('match_xp',0),match_coins=a.get('match_coins',0),regen_rate=a['regen_rate'],guard_changed=a['guard_changed'],guard_from=a['guard_from'])
+                    public[-1].update(appearance=a.get('appearance',{}),technique=self.technique_state(a),y=a.get('y',0.),mob_kind=a.get('mob_kind',''),build_mode=a.get('build_mode',False),mine_progress=a.get('mine_progress',0.),mining_started=a.get('mining_started',0.),team=a.get('team',-1),downed=a.get('downed',0.),eliminated=bool(a.get('eliminated',False)),revive_progress=a.get('revive_progress',0.),match_score=a.get('match_score',0),match_xp=a.get('match_xp',0),match_coins=a.get('match_coins',0),regen_rate=a['regen_rate'],guard_changed=a['guard_changed'],guard_from=a['guard_from'])
                 return dict(player=s["fighter"], time=self.clock, fighters=public, events=[e for e in self.events if e.get("world_id",room)==room][-12:],
                             pickup=self.pickup_hint(f) if f else {},revive=self.revive_hint(f),match=self.match_state(room),
                             hitboxes=[hb.debug_actor(a,self.clock) for a in self.fighters.values() if a['world_id']==room and a['dead']<=0 and (not f or math.hypot(a['x']-f['x'],a['z']-f['z'])<14)] if body.get('debug_hitboxes') else [],
@@ -491,6 +502,7 @@ class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat
             for f in list(self.fighters.values()):
                 if f.get('eliminated'):continue
                 if f["dead"] > 0:
+                    self.cancel_technique(f)
                     f["dead"] -= dt
                     if f["dead"] <= 0:
                         f["dead"] = 0
@@ -507,6 +519,7 @@ class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat
                 f['mode_input']=inp
                 match=self.match_for(f)
                 if match and match['phase']!='playing' or f.get('downed',0)>0:
+                    self.cancel_technique(f)
                     f.update(move_x=0.,move_z=0.,attack='',windup=0.,block=False);continue
                 if f["burn"]>0:
                     f["burn"]=max(0.,f["burn"]-dt);f["burn_tick"]+=dt
@@ -517,7 +530,7 @@ class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat
                 f["spawn_safe"] = max(0.,f["spawn_safe"]-dt)
                 f["yaw"] = inp.get("yaw",f["yaw"])
                 f["fall"]=max(0.,f["fall"]-dt);f["balance"]=min(100.,f["balance"]+dt*12)
-                if f["fall"]>0:f["block"]=False;f["move_x"]=f["move_z"]=0.;continue
+                if f["fall"]>0:self.cancel_technique(f);f["block"]=False;f["move_x"]=f["move_z"]=0.;continue
                 f["aim_zone"]=inp.get("aim_zone","body");f["aim_pitch"]=inp.get("aim_pitch",0)
                 for timer in ("spell_cd","slow","disarmed","ward_time"):f[timer]=max(0.,f[timer]-dt)
                 if f["ward_time"]<=0:f["ward"]=0.
@@ -581,6 +594,7 @@ class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat
                     f['queued_repeat']=bool(repeat and f['last_attack'])
                     f['queued_auto_cut']=automatic
                 if f["queued_until"]<self.clock:f["queued_attack"]=""
+                self.queue_technique(f,inp)
                 attack = f["queued_attack"]
                 ranged=ITEMS[f["weapon"]]["family"] in RANGED
                 if attack in ('spin','reverse_spin','rising','pommel','feint') and (ranged or ITEMS[f["weapon"]]["family"]=="rope"):
@@ -602,6 +616,7 @@ class Arena(Realms,Social,GameModes,ArenaFeatures,BotBrain,LearningCombat,Combat
                     f["queued_attack"]=""
                     f['queued_repeat']=False
                     self.learning_attack(f)
+                    self.technique_attack_started(f,attack)
                 f["last_attack"] = bool(pressed)
                 if self.is_realm(f):
                     if inp.get('build_mode') and (f['attack'] or f['queued_attack']):self.cancel_attack(f,.12)

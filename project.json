@@ -1,7 +1,7 @@
 {
   "name": "Xervexl",
   "company": "motlon",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "type": "native_windows_sword_arena",
   "renderers": [
     "OpenGL",
@@ -102,5 +102,33 @@
       "friends_build"
     ],
     "arena_progress_isolated": true
+  },
+  "character_customization": {
+    "account_saved": true,
+    "shared_in_multiplayer": true,
+    "skin_cloth_hair_colours": true,
+    "capes": [
+      "none",
+      "short",
+      "long",
+      "split"
+    ],
+    "cape_patterns": [
+      "plain",
+      "stripe",
+      "chevron",
+      "sun"
+    ],
+    "cosmetic_only": true
+  },
+  "windows_status": "notification_area_connection_rank_health_stamina_restore_and_exit",
+  "local_server_ports": "reuse_matching_server_or_free_port_in_8765_to_8796",
+  "rank_techniques": {
+    "one_new_combination_per_rank_after_1": true,
+    "finite_unlock_cap": false,
+    "choose_key": "P",
+    "perform_key": "O",
+    "normal_stamina_and_recovery": true,
+    "defence_cancels": true
   }
 }

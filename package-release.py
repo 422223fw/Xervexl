@@ -2,21 +2,25 @@
 import hashlib
 import json
 import zipfile
+import subprocess
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent
 PUBLIC_DIRS=('src','vendor','shaders','assets','tests','third_party','oreon-bridge','runtime')
-PUBLIC_FILES=('LICENSE','THIRD_PARTY.md','OREON-INTEGRATION.md','README.md','SCORING.md','VALIDATION.md','WORKSHOP.md','accounts.example.json','package.ps1','project.json',
+PUBLIC_FILES=('LICENSE','THIRD_PARTY.md','OREON-INTEGRATION.md','README.md','SCORING.md','VALIDATION.md','WORKSHOP.md','LOCAL_CHANGE_REVIEW.md','accounts.example.json','package.ps1','project.json',
               'server.py','rules.py','combat.py','hitboxes.py','arena_features.py','game_modes.py','bot_brain.py','bot_learning.py','realms.py','social.py','voxel_world.py',
-              'session_store.py','start.ps1','build.ps1','build-oreon.ps1','setup-oreon.py','package-release.py','Play-Xervexl.cmd')
+              'session_store.py','appearance.py','techniques.py','start.ps1','build.ps1','build-oreon.ps1','setup-oreon.py','package-release.py','Play-Xervexl.cmd')
 BUILD_TOOLS=('tools/make_audio.py','tools/make_shaders.py','tools/export_combat_geometry.cpp')
 
 def main():
     files=[ROOT/p for p in PUBLIC_FILES+BUILD_TOOLS+('build/Xervexl.exe',)]
-    # Every root Python module is part of the authoritative server/build source.
-    files+=list(ROOT.glob('*.py'))
+    # Local experiments and unrelated untracked files are not release source.
+    tracked=None
+    if (ROOT/'.git').exists():tracked=set(subprocess.check_output(['git','ls-files','-z'],cwd=ROOT).decode('utf-8').split('\0'))
+    additions={'src/appearance_render.hpp','src/style.inc','src/windows_status.hpp','tests/test_style_techniques.py'}
     for directory in PUBLIC_DIRS:
-        files.extend(p for p in (ROOT/directory).rglob('*') if p.is_file() and not {'target','__pycache__','.git'}.intersection(p.relative_to(ROOT).parts))
+        files.extend(p for p in (ROOT/directory).rglob('*') if p.is_file() and not {'target','__pycache__','.git'}.intersection(p.relative_to(ROOT).parts)
+                     and (tracked is None or directory=='runtime' or p.relative_to(ROOT).as_posix() in tracked|additions))
     files=sorted(set(files))
     if not (ROOT/'runtime/oreon/xervexl-oreon.jar').exists():raise RuntimeError('Build Oreon first')
     if not (ROOT/'runtime/sources/OpenJDK8U-jdk-sources_8u504b01.tar.gz').exists():raise RuntimeError('Run setup-oreon.py to include Java corresponding source')

@@ -5,16 +5,29 @@
 #include "voxel.hpp"
 #include "controls.hpp"
 #include "audio.hpp"
+#include "windows_status.hpp"
 #include <windowsx.h>
 #include <mmsystem.h>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
 
-enum class Screen {Home,Auth,Shop,Settings,Help,Leaders,Inventory,Worlds,Modes,Workshop,Friends,Realms,Crafting};
+enum class Screen {Home,Auth,Shop,Settings,Help,Leaders,Inventory,Worlds,Modes,Workshop,Friends,Realms,Crafting,Style,Techniques};
 struct App {
     HWND window{};int width=1280,height=800;bool running=true,clicked=false,locked=false,vulkan=false;
-    float mouseX=0,mouseY=0,yaw=0,pitch=.28f,time=0;int attackMode=0;
+    WindowsStatus windowsStatus;
+    void windows_status(){
+        std::lock_guard<std::mutex> guard(net.mutex);
+        std::string label="Xervexl | motlon\nServer: "+std::string(net.connected?"connected":"disconnected");
+        if(!net.profile.empty()&&!net.profile.value("guest",true)){
+            label+="\n"+net.profile.value("username",std::string("Fighter"))+" | Rank "+decimal_text(net.profile,"level","1");
+            if(net.joined&&net.world.contains("fighters"))for(const auto& fighter:net.world["fighters"])if(fighter.value("id",std::string{})==net.player){
+                label+="\nHP "+std::to_string(static_cast<int>(fighter.value("hp",0.f)))+"/"+std::to_string(static_cast<int>(fighter.value("max_hp",100.f)))+" | Stamina "+std::to_string(static_cast<int>(fighter.value("stamina",0.f)));break;
+            }
+        }else label+="\nSign in to play";
+        windowsStatus.set(label);
+    }
+    float mouseX=0,mouseY=0,clickX=0,clickY=0,rightClickX=0,rightClickY=0,yaw=0,pitch=.28f,time=0;int attackMode=0;
     float cameraDistance=5.2f,cameraTarget=5.2f,mouseDX=0,mouseDY=0;std::string guardDir="centre";int inventoryPage=0,inventorySlot=0,worldPage=0;
     bool arena=false,pendingPlay=false,wasDead=false;Screen screen=Screen::Home;
     int authMode=0,focus=-1;std::string fields[9]={"", "", "", "", "http://127.0.0.1:8765","My Arena","on start weapon arming\non kill if head heal 20\non revive score 25\non win score 100","","My World"};
@@ -41,6 +54,9 @@ struct App {
     int realmPage=0,friendPage=0,craftPage=0,buildMaterial=0,buildShape=0,buildRotation=0;float lastSocial=-10,lastRealms=-10;
     const char* materials[5]={"wood","stone","dirt","glass","iron"};const char* shapes[5]={"cube","slab","ramp","pillar","beam"};
     bool survival(){return world.contains("survival")&&!world["survival"].empty()&&!player.empty();}
+    json styleDraft=json::object(),techniques=json::object();int stylePart=0,techniquePage=0;float styleYaw=3.14f,lastTechniques=-10,techniquePulseUntil=-1;bool styleWalking=false;
+    void open_style(){if(require_sign_in())return;styleDraft=profile.value("appearance",default_appearance());screen=Screen::Style;focus=-1;}
+    void open_techniques(int page=0){if(require_sign_in())return;techniquePage=std::max(0,page);net.queue("/techniques",{{"page",techniquePage}});lastTechniques=time;screen=Screen::Techniques;focus=-1;}
     void open_friends(){if(require_sign_in())return;focus=-1;screen=Screen::Friends;net.queue("/social");lastSocial=time;}
     void open_realms(){if(require_sign_in())return;focus=-1;screen=Screen::Realms;net.queue("/realms");lastRealms=time;}
     void join_realm(const std::string& id){if(require_sign_in())return;net.queue("/realms/join",{{"id",id}});pendingPlay=true;screen=Screen::Home;focus=-1;positions.clear();buildMode=false;}
@@ -55,7 +71,7 @@ struct App {
     }
     void choose_room(int id=-1){if(require_sign_in(true,id))return;net.queue("/arena/world",id<0?json::object():json{{"world_id",id}});pendingPlay=true;screen=Screen::Home;}
 
-    bool hover(float x,float y,float w,float h){return mouseX>=x&&mouseX<=x+w&&mouseY>=y&&mouseY<=y+h;}
+    bool hover(float x,float y,float w,float h){float px=clicked?clickX:rightClicked?rightClickX:mouseX,py=clicked?clickY:rightClicked?rightClickY:mouseY;return px>=x&&px<=x+w&&py>=y&&py<=y+h;}
     bool button(float x,float y,float w,float h,const std::string& label,bool primary=false,bool allowBusy=false){
         bool hot=hover(x,y,w,h);Colour fill=primary?(hot?Colour{1,.76f,.39f}:GOLD):(hot?Colour{.17f,.22f,.21f,.97f}:Colour{.10f,.14f,.14f,.94f});
         canvas.rect(x,y,w,h,fill);canvas.border(x,y,w,h,primary?GOLD:Colour{.26f,.32f,.30f});
@@ -89,6 +105,7 @@ struct App {
     }
     void update(float dt){
         time+=dt;snapshot();
+        {std::lock_guard<std::mutex> guard(net.mutex);techniques=net.techniques;}
         {std::lock_guard<std::mutex> guard(net.mutex);social=net.social;realms=net.realms;if(!net.createdRealm.empty()){selectedRealm=net.createdRealm;net.createdRealm.clear();}}
         if(!notice.empty())toast(notice);
         if(pendingPlay&&!busy){
@@ -107,6 +124,7 @@ struct App {
         if(screen==Screen::Modes&&time-lastModes>2&&!busy){net.queue("/modes");lastModes=time;}
         if(screen==Screen::Friends&&time-lastSocial>3&&!busy){net.queue("/social");lastSocial=time;}
         if(screen==Screen::Realms&&time-lastRealms>3&&!busy){net.queue("/realms");lastRealms=time;}
+        if(screen==Screen::Techniques&&time-lastTechniques>2&&!busy){net.queue("/techniques",{{"page",techniquePage}});lastTechniques=time;}
         music.update(arena&&screen==Screen::Home);
         if(switchSmoke&&time>1.1f*(switchStep+1)&&switchStep<3){engine(!vulkan);switchStep++;}
         json self;
@@ -136,6 +154,7 @@ struct App {
             if(kind=="grip_hold"&&e.value("source",std::string{})==player)toast("OPPONENT HELD THEIR GRIP");
             if(kind=="pickup"&&e.value("source",std::string{})==player)toast("PICKED UP: "+item_info(e.value("weapon",std::string("knife"))).value("name",std::string("WEAPON")));
             if(kind=="level"&&e.value("target",std::string{})==player)toast("LEVEL UP! RANK "+std::to_string(e.value("level",1)));
+            if(kind=="technique_unlock"&&e.value("target",std::string{})==player)toast("NEW TECHNIQUE / RANK "+std::to_string(e.value("level",2))+" / P TO CHOOSE / O TO PERFORM");
             if(kind=="fall"&&e.value("target",std::string{})==player)toast("KNOCKED DOWN / RECOVERING FOOTING");
         }
         bool foreground=GetForegroundWindow()==window;
@@ -158,6 +177,7 @@ struct App {
                     {"yaw",yaw},{"attack",attack},{"block",key(VK_RBUTTON)},{"easy_controls",controls.easy},{"auto_cut",controls.primaryAttack},{"debug_hitboxes",showHitboxes},
                     {"dodge",key(VK_SHIFT)},{"jump",key(VK_SPACE)},{"drop",key('G')},{"pickup",key('F')},{"cast",key('B')},
                     {"aim_zone",aimZone},{"aim_pitch",pitch-.28f},{"guard_dir",guardDir},{"revive",key('H')}};
+        input["technique_rank"]=(key('O')||(arena&&screen==Screen::Home&&time<techniquePulseUntil))?profile.value("selected_technique",0):0;
         if(survival()){
             input["aim_pitch"]=pitch;input["build_mode"]=buildMode;input["mine"]=buildMode&&key(VK_LBUTTON);input["place"]=buildMode&&key(VK_RBUTTON);
             input["build_material"]=materials[buildMaterial];input["build_shape"]=shapes[buildShape];input["build_rotation"]=buildRotation;
@@ -168,6 +188,11 @@ struct App {
     }
     void world_view(){
         canvas.following=arena&&cameraDistance>=.45f;
+        if(screen==Screen::Style){
+            float a=styleYaw;canvas.set_camera({std::sin(a)*3.5f,2.1f,std::cos(a)*3.5f},{0,1.1f,0});environment(canvas,time);
+            json f={{"id","style-preview"},{"x",0},{"z",0},{"yaw",0},{"weapon","fists"},{"appearance",styleDraft},{"move_z",styleWalking?2.6f:0.f},{"gait",styleWalking?time*9:0}};
+            fighter(canvas,f,time,true);canvas.flush3();return;
+        }
         float combatTime=animationClock.sample(world.value("time",0.f),time),motionAge=motion_elapsed(world.value("time",0.f),combatTime);
         if(!previewMove.empty()){
             canvas.set_camera({3,2.45f,4},{0,1.18f,0});environment(canvas,time);
@@ -259,9 +284,11 @@ struct App {
         canvas.text(951,650,world.value("world",json::object()).value("name",std::string("CHOOSE YOUR NEXT ARENA")),1.45f,WHITE);
         if(button(951,680,251,32,"EXPLORE WORLDS"))screen=Screen::Worlds;
         if(button(951,548,251,40,"FRIENDS"))open_friends();
+        if(button(603,680,251,40,"SKINS & CAPES"))open_style();
+        if(button(603,628,251,40,"RANK TECHNIQUES"))open_techniques();
         canvas.rect(0,755,1280,45,{.025f,.043f,.045f,.95f});canvas.circle(34,777,4,connected?Colour{.40f,.72f,.48f}:GOLD);
         canvas.text(48,771,connected?"SERVER CONNECTED":"LOCAL / CONNECT TO START",1.35f,MUTED);
-        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.12.0",1.35f,MUTED);
+        canvas.text(830,771,std::string(renderer->name())+"  /  ONE GAME  /  V0.13.0",1.35f,MUTED);
     }
     void panel(const std::string& title,const std::string& subtitle){
         canvas.rect(0,0,1280,800,{.02f,.035f,.035f,.72f});canvas.rect(276,102,728,610,{.055f,.079f,.083f,.98f});canvas.border(276,102,728,610,{.27f,.32f,.29f});
@@ -297,6 +324,7 @@ struct App {
 #include "menus.inc"
 #include "workshop.inc"
 #include "realms.inc"
+#include "style.inc"
     void settings(){
         panel("ARENA SETTINGS","A LOCAL SERVER WORKS NOW. REMOTE SERVERS CAN BE ADDED LATER.");
         field(315,233,650,"SERVER ADDRESS",4);
@@ -354,6 +382,7 @@ struct App {
         canvas.text(47,701,healthRegen>0?"REGEN +2":"HEALTH",1.1f,healthRegen>0?Colour{.44f,.80f,.49f}:MUTED);canvas.rect(132,700,239,12,{.16f,.20f,.18f});canvas.rect(132,700,239*hp/maxHp,12,healthRegen>0?Colour{.31f,.64f,.38f}:Colour{.62f,.26f,.19f});canvas.text(263,672,std::to_string(static_cast<int>(hp))+" / "+std::to_string(static_cast<int>(maxHp)),1.2f,MUTED);
         canvas.text(47,728,"STAMINA",1.1f,MUTED);canvas.rect(132,727,239,9,{.16f,.20f,.18f});canvas.rect(132,727,239*stamina/100,9,GOLD);
         canvas.text(47,752,std::to_string(kills)+" ELIMINATIONS / "+std::to_string(coins)+" CROWNS",1.15f,MUTED);
+        if(profile.value("technique_count",0)>0)canvas.text(28,612,"P TECHNIQUES / O SELECTED COMBO",1.2f,GOLD);
         json slots=profile.value("weapon_slots",json::array({"knife","","","",""}));
         for(int i=0;i<5;i++){float x=450+i*119;std::string id=i<static_cast<int>(slots.size())?slots[i].get<std::string>():"";bool active=id==heldWeapon&&!id.empty();canvas.rect(x,714,112,54,active?Colour{.38f,.28f,.16f,.94f}:Colour{.04f,.07f,.075f,.90f});canvas.border(x,714,112,54,active?GOLD:Colour{.20f,.27f,.25f});canvas.text(x+10,723,std::to_string(i+1),1.4f,GOLD);canvas.text(x+10,748,id.empty()?"EMPTY":id.substr(0,13),1.05f,WHITE);}
         auto info=item_info(heldWeapon);std::string weaponLabel=heldWeapon=="fists"?"BARE HANDS / F: RECOVER":info.value("name",heldWeapon);canvas.text(450,648,weaponLabel+" / AIM: "+aimZone+" [Z X C]",1.3f,GOLD);
@@ -377,7 +406,7 @@ struct App {
         canvas.begin(width,height);world_view();
         if(arena&&screen==Screen::Home)survival_hud();
         if(!previewMove.empty()){canvas.rect(30,25,620,69,{.035f,.055f,.06f,.92f});canvas.text(46,38,"MOVEMENT PREVIEW / "+previewMove,2,GOLD);canvas.text(46,69,"VISUAL MANNEQUIN / NO ARENA SESSION",1.25f,MUTED);}else if(arena&&screen==Screen::Home)hud();else{
-            if(screen==Screen::Home)home();else if(screen==Screen::Auth)auth();else if(screen==Screen::Shop)shop();else if(screen==Screen::Settings)settings();else if(screen==Screen::Leaders)leaderboard_view();else if(screen==Screen::Inventory)inventory_view();else if(screen==Screen::Worlds)worlds_view();else if(screen==Screen::Modes)modes_view();else if(screen==Screen::Workshop)workshop_view();else if(screen==Screen::Friends)friends_view();else if(screen==Screen::Realms)realms_view();else if(screen==Screen::Crafting)crafting_view();else help();
+            if(screen==Screen::Home)home();else if(screen==Screen::Auth)auth();else if(screen==Screen::Shop)shop();else if(screen==Screen::Settings)settings();else if(screen==Screen::Leaders)leaderboard_view();else if(screen==Screen::Inventory)inventory_view();else if(screen==Screen::Worlds)worlds_view();else if(screen==Screen::Modes)modes_view();else if(screen==Screen::Workshop)workshop_view();else if(screen==Screen::Friends)friends_view();else if(screen==Screen::Realms)realms_view();else if(screen==Screen::Crafting)crafting_view();else if(screen==Screen::Style)style_view();else if(screen==Screen::Techniques)techniques_view();else help();
         }
         std::string value=!error.empty()?error:time<messageUntil?localMessage:std::string{};
         if(!value.empty()){
@@ -400,14 +429,28 @@ struct App {
 App* app=nullptr;
 LRESULT CALLBACK window_proc(HWND w,UINT msg,WPARAM wp,LPARAM lp){
     if(!app)return DefWindowProcW(w,msg,wp,lp);
+    if(msg==app->windowsStatus.taskbarCreated){app->windowsStatus.refresh(true);return 0;}
+    if(msg==WindowsStatus::callback){
+        if(lp==WM_LBUTTONDBLCLK){ShowWindow(w,SW_RESTORE);SetForegroundWindow(w);}
+        if(lp==WM_RBUTTONUP){
+            HMENU menu=CreatePopupMenu();AppendMenuW(menu,MF_STRING,1,L"Open Xervexl");AppendMenuW(menu,MF_STRING,2,L"Exit Xervexl");
+            POINT cursor;GetCursorPos(&cursor);SetForegroundWindow(w);
+            UINT choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,cursor.x,cursor.y,0,w,nullptr);DestroyMenu(menu);PostMessageW(w,WM_NULL,0,0);
+            if(choice==1){ShowWindow(w,SW_RESTORE);SetForegroundWindow(w);}if(choice==2)app->running=false;
+        }
+        return 0;
+    }
     switch(msg){
+        case WM_TIMER:if(wp==41)app->windows_status();return 0;
         case WM_CLOSE:app->running=false;return 0;
         case WM_SIZE:app->width=std::max(1,static_cast<int>(LOWORD(lp)));app->height=std::max(1,static_cast<int>(HIWORD(lp)));return 0;
         case WM_MOUSEMOVE:app->mouseX=GET_X_LPARAM(lp)*1280.f/app->width;app->mouseY=GET_Y_LPARAM(lp)*800.f/app->height;return 0;
-        case WM_LBUTTONDOWN:app->clicked=true;return 0;
-        case WM_RBUTTONDOWN:app->rightClicked=true;return 0;
+        case WM_LBUTTONDOWN:app->clickX=GET_X_LPARAM(lp)*1280.f/app->width;app->clickY=GET_Y_LPARAM(lp)*800.f/app->height;app->clicked=true;return 0;
+        case WM_RBUTTONDOWN:app->rightClickX=GET_X_LPARAM(lp)*1280.f/app->width;app->rightClickY=GET_Y_LPARAM(lp)*800.f/app->height;app->rightClicked=true;return 0;
         case WM_MOUSEWHEEL:if(app->arena&&app->screen==Screen::Home)app->cameraTarget=std::clamp(app->cameraTarget-GET_WHEEL_DELTA_WPARAM(wp)/120.f*.9f,0.f,14.f);return 0;
         case WM_KEYDOWN:
+            if(wp=='O'&&app->arena&&app->screen==Screen::Home&&app->focus<0&&!(lp&(1<<30)))app->techniquePulseUntil=app->time+.18f;
+            if(wp=='P'&&app->focus<0&&app->screen!=Screen::Auth&&app->screen!=Screen::Settings&&!(lp&(1<<30)))app->open_techniques();
             if(app->focus==6&&(GetKeyState(VK_CONTROL)&0x8000)){
                 if(wp=='A'){app->editorSelectAll=true;return 0;}
                 if(wp=='V'&&OpenClipboard(w)){
@@ -451,6 +494,7 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
         if(args.find("--worlds")!=std::string::npos)state.screen=Screen::Worlds;
         if(args.find("--modes")!=std::string::npos)state.screen=Screen::Modes;
         if(args.find("--workshop")!=std::string::npos)state.screen=Screen::Workshop;
+        if(args.find("--style")!=std::string::npos){state.styleDraft=default_appearance();state.styleDraft["cape"]["style"]="long";state.styleDraft["cape"]["pattern"]="chevron";state.screen=Screen::Style;}
         if(args.find("--friends")!=std::string::npos)state.open_friends();
         if(args.find("--realms")!=std::string::npos)state.open_realms();
         if(args.find("--first-person")!=std::string::npos)state.cameraDistance=state.cameraTarget=0;
@@ -464,6 +508,7 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
         if(!state.window)throw std::runtime_error("Cannot create game window");
         SetWindowTextW(state.window,L"Xervexl | motlon");ShowWindow(state.window,SW_SHOWNORMAL);UpdateWindow(state.window);
         state.engine(state.vulkan,args.find("--opengl")==std::string::npos&&args.find("--vulkan")==std::string::npos);state.net.queue("/health");
+        state.windowsStatus.attach(state.window);SetTimer(state.window,41,1000,nullptr);
         if(args.find("--leaders")!=std::string::npos)state.leaders();
         if(auto pos=args.find("--world=");pos!=std::string::npos)state.choose_room(std::stoi(args.substr(pos+8)));else if(state.smokeArena)state.play();
         auto previous=std::chrono::steady_clock::now();int frameCount=0;double fpsTotal=0;
@@ -473,12 +518,13 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
             auto now=std::chrono::steady_clock::now();float dt=std::chrono::duration<float>(now-previous).count();previous=now;
             state.update(std::min(dt,.1f));if(state.smoke&&fpsTotal+dt>4)state.captureNext=true;state.frame();frameCount++;fpsTotal+=dt;
             if(state.smoke&&fpsTotal>4){
-                std::filesystem::create_directories("screenshots");std::string tag=state.switchSmoke?"combined":state.vulkan?"vulkan":"opengl";if(!state.previewMove.empty())tag+="-pose-"+state.previewMove;else if(state.screen==Screen::Auth)tag+="-auth";else if(state.smokeArena)tag+=state.cameraTarget<.45f?"-first-person":state.cameraTarget>12?"-overhead":"-arena";else if(state.screen==Screen::Shop)tag+="-shop";else if(state.screen==Screen::Leaders)tag+="-leaders";else if(state.screen==Screen::Inventory)tag+="-inventory";else if(state.screen==Screen::Worlds)tag+="-worlds";else tag+="-home";
+                std::filesystem::create_directories("screenshots");std::string tag=state.switchSmoke?"combined":state.vulkan?"vulkan":"opengl";if(!state.previewMove.empty())tag+="-pose-"+state.previewMove;else if(state.screen==Screen::Auth)tag+="-auth";else if(state.smokeArena)tag+=state.cameraTarget<.45f?"-first-person":state.cameraTarget>12?"-overhead":"-arena";else if(state.screen==Screen::Shop)tag+="-shop";else if(state.screen==Screen::Leaders)tag+="-leaders";else if(state.screen==Screen::Inventory)tag+="-inventory";else if(state.screen==Screen::Worlds)tag+="-worlds";else if(state.screen==Screen::Style)tag+="-style";else tag+="-home";
                 state.capture("screenshots/"+tag+".bmp");
                 json report={{"renderer",state.renderer->name()},{"frames",frameCount},{"seconds",fpsTotal},{"vertices",state.canvas.mesh.size()},{"connected",state.connected},{"player",state.player},{"fighters",state.world.value("fighters",json::array()).size()},{"humans",state.world.value("humans",0)},{"bots",state.world.value("bots",0)},{"error",state.error}};
                 report["scene_engine"]="Oreon";report["oreon_frames"]=state.oreon->frames;report["world_triangles"]=state.canvas.worldTriangles.size();report["graphics_engines_used"]=state.seenApis;report["catalog_items"]=state.catalog.size();report["rank"]=state.level;report["skill"]=state.skill;report["xp"]=state.xp;
                 report["camera_distance"]=state.cameraDistance;report["world"]=state.world.value("world",json::object()).value("name",std::string{});report["signed_in"]=state.signed_in();report["weapon_slots"]=state.profile.value("weapon_slots",json::array());
                 report["signup_screen"]=state.screen==Screen::Auth&&state.authMode==1;report["xp_to_next"]=decimal_text(state.profile,"xp_to_next","79");
+                report["windows_status_icon"]=state.windowsStatus.available();
                 std::ofstream("screenshots/"+tag+".json")<<report.dump(2);Sleep(500);break;
             }
             auto used=std::chrono::steady_clock::now()-now;if(used<std::chrono::milliseconds(16))std::this_thread::sleep_for(std::chrono::milliseconds(16)-used);
@@ -486,7 +532,7 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR command,int){
         if(state.locked){ClipCursor(nullptr);ShowCursor(TRUE);}
         bool joined;{std::lock_guard<std::mutex> guard(state.net.mutex);joined=state.net.joined;}
         if(joined){state.net.queue("/arena/leave");Sleep(70);}
-        state.renderer.reset();state.oreon.reset();DestroyWindow(state.window);app=nullptr;return 0;
+        KillTimer(state.window,41);state.windowsStatus.remove();state.renderer.reset();state.oreon.reset();DestroyWindow(state.window);app=nullptr;return 0;
     }catch(const std::exception& error){
         std::ofstream("client-error.log")<<error.what();MessageBoxA(nullptr,error.what(),"Xervexl could not start",MB_OK|MB_ICONERROR);return 1;
     }

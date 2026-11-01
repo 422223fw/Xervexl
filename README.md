@@ -8,6 +8,21 @@ The combined version is published under **GPLv3**, preserving Oreon attribution 
 
 ## Play
 
+Version **0.13** adds **Skins & Capes** on the home screen: choose skin, hair,
+tunic, trousers, trim and cape colours, fine-tune RGB, select hair and tunic
+patterns, and preview short, long or split animated capes before saving. The
+appearance is saved to the account and shared with other players in arenas and
+survival worlds. These cosmetics do not alter health, damage or hitboxes.
+
+Every rank after rank 1 unlocks another **combat technique** in addition to the
+existing direct attacks. Press **P** to inspect/select techniques and **O** to
+perform the selected combination. Each swing has normal stamina cost, recovery
+and hit detection; blocking, dodging, falling, disarming or manual attacks stop
+the combination. Initial ranks have named authored sequences; later ranks gain
+unique deterministic combinations without a finite unlock cap. Technique unlocks
+use the current arena/world rank. Existing accounts gain access from their earned
+rank automatically, without resetting XP or requiring purchases.
+
 Version 0.11 smooths footsteps, starts/stops, jumps and the following camera between server updates. The action bar shows WINDUP, CONTACT, RECOVERING, GUARD or READY, with the remaining time before the next attack. Motion prediction stops after 90 ms without fresh state; physical hit detection stays on the server.
 
 Version 0.10 adds smoother attack arcs with matched contact velocity and acceleration, softer guard transitions, supported-foot walk cycles and a counter-swinging free hand. The server uses the same updated curves and limb positions for collision. Existing attack timing, damage and progression rules are preserved.
@@ -15,6 +30,16 @@ Version 0.10 adds smoother attack arcs with matched contact velocity and acceler
 Each biome now has its own lighting, haze and sky colours, layered distant ridges, wind-blown tree crowns and cloth banners, worn circular paving, stone courses and nearby ground cover. Snow adds caps to vegetation and ruins; the coast has moving wave bands, and night arenas have moonlight and torch flames. These are procedural visuals in both renderers, with flat playable ground and the existing object collisions. Layered ground drawing prevents the former floor wedges from painting over surface details and characters; the current release uses Oreon depth testing for intersecting 3D geometry.
 
 Double-click **Play-Xervexl.cmd**. It starts a hidden local arena server and opens the game. No Windows administrator privileges are needed. Python 3.10+ is required; Python and the portable C++ compiler are already installed on this computer.
+
+If another application occupies port 8765, the launcher finds a free port in
+8765–8796 and passes that address to the game; it leaves other applications
+running. It remembers the chosen local port. `start.ps1 -Port 9000` selects a
+different range. The Windows notification area also shows an Xervexl status icon:
+hover for connection, rank, health and stamina; double-click to restore the
+window, or right-click for Open/Exit. The icon disappears when the game closes.
+
+`LOCAL_CHANGE_REVIEW.md` records the inherited local edits, their observed effects,
+the necessary repairs, and the unrelated drafts left outside this release.
 
 The compiled game is `build/Xervexl.exe`. Auto mode selects OpenGL. **Both presentation APIs are in the same file**, selectable in **Settings → Auto / OpenGL / Vulkan**. Oreon's core/OpenGL scene renderer runs in both modes; Vulkan receives the rendered frame through the native presentation bridge. A compatible OpenGL 3.3 driver and the portable `runtime/` folder are required. `powershell -NoProfile -ExecutionPolicy Bypass -File start.ps1 -Vulkan` remains supported.
 

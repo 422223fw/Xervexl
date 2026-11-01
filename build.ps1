@@ -12,7 +12,7 @@ if ($LASTEXITCODE) { throw "Collision pose export failed" }
 python tools/make_shaders.py
 if ($LASTEXITCODE) { throw "Shader assembly failed" }
 if (!(Test-Path shaders/arena.vert.spv) -or !(Test-Path shaders/arena.frag.spv)) { throw "Compile shaders using glslang first." }
-& $Compiler -std=c++20 -O2 -Wall -Wextra -Wno-missing-field-initializers -Wno-misleading-indentation -static -mwindows -Isrc -Ivendor ('-I'+$JavaHome+'/include') ('-I'+$JavaHome+'/include/win32') src/main.cpp -o $OutputPath -lopengl32 -lgdi32 -lwinhttp -lwinmm -luser32 -lcrypt32
+& $Compiler -std=c++20 -O2 -Wall -Wextra -Wno-missing-field-initializers -Wno-misleading-indentation -static -mwindows -Isrc -Ivendor ('-I'+$JavaHome+'/include') ('-I'+$JavaHome+'/include/win32') src/main.cpp -o $OutputPath -lopengl32 -lgdi32 -lwinhttp -lwinmm -luser32 -lcrypt32 -lshell32
 if ($LASTEXITCODE) { throw "C++ build failed" }
 if (!$ReuseAudio) {
     python tools/make_audio.py
