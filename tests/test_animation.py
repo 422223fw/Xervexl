@@ -40,4 +40,24 @@ class LocomotionTests(unittest.TestCase):
             self.assertLess(abs(hb.smooth(edge+h)+hb.smooth(edge-h)-2*hb.smooth(edge)),1e-10)
 
 
+class RegressionTests(unittest.TestCase):
+    def test_foot_step_extreme_speed(self):
+        # speed >1 is clamped internally; ensure no crash
+        stride, lift = hb.foot_step(math.tau, 2, 1)
+        self.assertIsInstance(stride, float)
+        self.assertIsInstance(lift, float)
+
+    def test_foot_step_gait_periodicity(self):
+        for leg in (-1, 1):
+            s0, l0 = hb.foot_step(0, 1, leg)
+            s1, l1 = hb.foot_step(math.tau, 1, leg)
+            self.assertEqual((s0, l0), (s1, l1))
+
+    def test_body_shapes_with_block(self):
+        f = dict(x=0, z=0, yaw=0, body_yaw=0, weapon='knife', block=True, guard_dir='right', move_x=0, move_z=4.4, gait=0)
+        shapes, shield = hb.body_shapes(f, 0)
+        self.assertIsInstance(shapes, list)
+        self.assertIsNone(shield)
+
+
 if __name__=='__main__':unittest.main()

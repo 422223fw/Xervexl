@@ -1,0 +1,28 @@
+Xervexl Package Instructions
+============================
+
+1. Ensure Python 3.10+ is installed on the system.
+2. Open a PowerShell terminal with execution policy bypass.
+3. Run the build script to compile the C++ client:
+   powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
+4. After successful build, the compiled game executable is at `build/Xervexl.exe`.
+5. Package the distribution:
+   - Include the `build/` folder containing Xervexl.exe.
+   - Include the `runtime/` folder (portable C++ runtime).
+   - Include `start.ps1` for launching the game.
+   - Include `data/` folder for accounts and settings (private to each user).
+   - Include `screenshots/` folder for capture.bmp outputs.
+   - Include `OREON-INTEGRATION.md` for integration details.
+6. To package a release run:
+   powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1
+   This script calls `python package-release.py` which performs the final packaging steps.
+7. Verify the package by running smoke tests:
+   build/Xervexl.exe --smoke --opengl
+   build/Xervexl.exe --smoke --vulkan
+   build/Xervexl.exe --smoke --arena
+8. Documentation notes:
+   - The combined version is published under GPLv3, preserving Oreon attribution.
+   - Public internet hosting is not configured; friends need the same backend address.
+   - Python and the portable C++ compiler are already installed on this computer.
+
+End of instructions.

@@ -1,0 +1,1 @@
+The build-and-release procedure was executed successfully. All necessary files are included in the package.
